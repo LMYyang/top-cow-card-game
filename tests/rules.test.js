@@ -1,0 +1,144 @@
+import { describe, it, expect } from 'vitest'
+import {
+  canFollow, playableTiles, mustDiscard, playableForLead,
+  settle, diceToSeatOffset, seatName,
+} from '../src/core/rules.js'
+import { tile } from './helpers.js'
+
+describe('canFollow 跟牌判定', () => {
+  it('任一端点与桌面牌任一端点相同即可接', () => {
+    const table = tile('t1-1') // 大天 6/6
+    expect(canFollow(tile('t4-1'), table)).toBe(true)  // 红十 4/6
+    expect(canFollow(tile('t7-1'), table)).toBe(true)  // 一六 1/6
+    expect(canFollow(tile('t9-1'), table)).toBe(false) // 一三 1/3
+  })
+  it('桌面最新牌是唯一参照', () => {
+    const table = tile('t12-1') // 三六 3/6
+    expect(canFollow(tile('t6-1'), table)).toBe(true)  // 长三 3/3
+  })
+})
+
+describe('playableTiles 跟牌可出列表', () => {
+  it('只列出能接的牌', () => {
+    const table = tile('t10-1') // 二板 2/2
+    const hand = [tile('t13-1'), tile('t1-1'), tile('t9-1')] // 二六(2/6)、大天(6/6)、一三(1/3)
+    const result = playableTiles(hand, table)
+    expect(result.map(t => t.id)).toEqual(['t13-1'])
+  })
+})
+
+describe('不能扣活牌', () => {
+  it('有牌可接时 mustDiscard 为 false', () => {
+    const table = tile('t10-1') // 2/2
+    const hand = [tile('t13-1')] // 二六 2/6 可接
+    expect(mustDiscard(hand, table)).toBe(false)
+  })
+  it('无牌可接时必须扣牌', () => {
+    const table = tile('t10-1') // 2/2
+    const hand = [tile('t9-1')] // 一三 1/3
+    expect(mustDiscard(hand, table)).toBe(true)
+  })
+})
+
+describe('playableForLead 头牌不拉三家', () => {
+  it('其余三家任一家手里有能接的端点，这张牌可出', () => {
+    const hand = [tile('t6-1'), tile('t9-1')] // 长三(3/3)、一三(1/3)
+    const others = [
+      [tile('t1-1')],  // 对家 大天 6/6
+      [tile('t7-1')],  // 下家 一六 1/6 —— 有 1 端，一三可接
+      [tile('t11-1')], // 上家 地幺 1/1
+    ]
+    const result = playableForLead(hand, others)
+    // 一三(1/3)：1 端被别人持有 → 可出；长三(3/3)：无人有 3 端 → 不可出
+    expect(result.map(t => t.id)).toEqual(['t9-1'])
+  })
+  it('头牌自己持有的端点不算数（比较的是其余三家）', () => {
+    const hand = [tile('t6-1'), tile('t9-1')] // 长三、一三
+    const others = [[tile('t1-1')], [tile('t11-1')], [tile('t11-2')]] // 大天6/6、地幺1/1、地幺1/1
+    // 一三有 1 端，上家地幺也有 1 端 → 一三可出；长三 3 端无人有 → 不可出
+    const result = playableForLead(hand, others)
+    expect(result.map(t => t.id)).toEqual(['t9-1'])
+  })
+})
+
+describe('diceToSeatOffset 骰点映射', () => {
+  it('1/5→掷骰者自己, 2/6→下家, 3→对家, 4→上家', () => {
+    expect(diceToSeatOffset(1)).toBe(0)
+    expect(diceToSeatOffset(5)).toBe(0)
+    expect(diceToSeatOffset(2)).toBe(1)
+    expect(diceToSeatOffset(6)).toBe(1)
+    expect(diceToSeatOffset(3)).toBe(2)
+    expect(diceToSeatOffset(4)).toBe(3)
+  })
+  it('非法点数抛错', () => {
+    expect(() => diceToSeatOffset(0)).toThrow()
+    expect(() => diceToSeatOffset(7)).toThrow()
+  })
+})
+
+describe('seatName 座位名', () => {
+  it('0=掷骰者(自己) 1=下家 2=对家 3=上家', () => {
+    expect(seatName(0)).toBe('自己')
+    expect(seatName(1)).toBe('下家')
+    expect(seatName(2)).toBe('对家')
+    expect(seatName(3)).toBe('上家')
+  })
+})
+
+describe('settle 结算', () => {
+  it('扣牌最少者赢，最多者大庄', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [tile('t9-1')] },  // 一三 4点 → 赢
+      { seat: 1, hand: [], kept: [tile('t1-1')] },  // 大天 12点 → 大庄（扣点最多）
+      { seat: 2, hand: [], kept: [tile('t13-1')] }, // 二六 8点 → 二庄
+      { seat: 3, hand: [], kept: [tile('t8-1')] },  // 一五 6点 → 小庄
+    ]
+    const result = settle(players, 0) // 头牌是 seat 0
+    expect(result.winner).toBe(0)
+    // ranks 按庄位序：赢家 → 大庄(扣点最多) → 二庄 → 小庄
+    expect(result.ranks.map(r => r.seat)).toEqual([0, 1, 2, 3])
+    expect(result.ranks.find(r => r.seat === 1).role).toBe('大庄')
+    expect(result.scores[0]).toBe(6)
+    expect(result.scores[1]).toBe(-3)
+    expect(result.scores[2]).toBe(-2)
+    expect(result.scores[3]).toBe(-1)
+  })
+
+  it('同点数输家按离头牌距离定庄位', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [] },              // 头牌净手 0点 → 赢
+      { seat: 1, hand: [], kept: [tile('t9-1')] },  // 4点
+      { seat: 2, hand: [], kept: [tile('t10-1')] }, // 4点
+      { seat: 3, hand: [], kept: [tile('t8-1')] },  // 6点
+    ]
+    const result = settle(players, 0)
+    expect(result.winner).toBe(0)
+    // seat3 6点最差=大庄；seat1 与 seat2 同 4 点，离头牌近的庄大 → seat1=二庄, seat2=小庄
+    expect(result.ranks.map(r => r.seat)).toEqual([0, 3, 1, 2])
+  })
+
+  it('四家净手：头牌赢，其余按出牌次序大庄二庄小庄', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [] },
+      { seat: 1, hand: [], kept: [] },
+      { seat: 2, hand: [], kept: [] },
+      { seat: 3, hand: [], kept: [] },
+    ]
+    const result = settle(players, 0)
+    expect(result.winner).toBe(0)
+    expect(result.ranks.map(r => r.seat)).toEqual([0, 1, 2, 3])
+    expect(result.ranks.find(r => r.seat === 1).role).toBe('大庄')
+  })
+
+  it('积分总和为 0（零和）', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [tile('t1-1')] },
+      { seat: 1, hand: [], kept: [tile('t9-1')] },
+      { seat: 2, hand: [], kept: [] },
+      { seat: 3, hand: [], kept: [tile('t8-1'), tile('t10-1')] },
+    ]
+    const result = settle(players, 0)
+    const sum = Object.values(result.scores).reduce((a, b) => a + b, 0)
+    expect(sum).toBe(0)
+  })
+})
