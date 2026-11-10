@@ -102,7 +102,17 @@ export function useGame() {
   /** AI 回合调度：当前座位是 AI 时延时出牌 */
   function scheduleAiIfNeeded() {
     if (view.state !== 'PLAYING') {
-      if (view.state === 'SETTLE') fx.settleShow = true
+      if (view.state === 'SETTLE') {
+        // 持久化战绩：本分支每局只会到达一次（唯一一次 SETTLE 翻转后的那次调用；
+        // 迟到的 AI 定时器在 g.state !== 'PLAYING' 处提前返回，不会递归到此处）
+        const prev = uni.getStorageSync('dingniuzi_stats') || { rounds: 0, totalScore: 0 }
+        const my = view.result.scores[0] || 0
+        uni.setStorageSync('dingniuzi_stats', {
+          rounds: prev.rounds + 1,
+          totalScore: prev.totalScore + my,
+        })
+        fx.settleShow = true
+      }
       return
     }
     if (view.currentSeat === 0) return
