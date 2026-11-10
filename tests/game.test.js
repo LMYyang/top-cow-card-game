@@ -131,6 +131,7 @@ describe('leadLegalTileIds 头牌首出约束', () => {
     const otherEnds = new Set(
       g.players.filter(p => p.seat !== g.leaderSeat).flatMap(p => p.hand.flatMap(t => [t.a, t.b]))
     )
+    expect(legal.length).toBeGreaterThan(0) // 非空守卫：防止恒空返回使断言空转通过
     for (const id of legal) {
       const t = g.players[g.leaderSeat].hand.find(t => t.id === id)
       expect(otherEnds.has(t.a) || otherEnds.has(t.b)).toBe(true)
