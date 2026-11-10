@@ -21,6 +21,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import PlayingTile from '../../components/PlayingTile.vue'
 
 const demoTile1 = { id: 'd1', name: '大天', a: 6, b: 6 }
@@ -29,6 +30,11 @@ const demoTile2 = { id: 'd2', name: '地幺', a: 1, b: 1 }
 const statsRaw = ref(uni.getStorageSync('dingniuzi_stats') || { rounds: 0, totalScore: 0 })
 const statsVisible = ref(false)
 const stats = computed(() => statsRaw.value)
+
+// 打完一局返回主菜单时刷新战绩（navigateBack 复用页面实例，setup 不会重跑）
+onShow(() => {
+  statsRaw.value = uni.getStorageSync('dingniuzi_stats') || { rounds: 0, totalScore: 0 }
+})
 
 function startGame() {
   uni.navigateTo({ url: '/pages/game/game' })
