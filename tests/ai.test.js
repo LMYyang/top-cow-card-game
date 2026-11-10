@@ -10,6 +10,11 @@ describe('aiChoosePlay 跟牌', () => {
     expect(choice.action).toBe('play')
     expect(choice.tileIds).toEqual(['t4-1']) // 红十 10 点最高
   })
+  it('没有可接的牌时返回 null', () => {
+    const table = tile('t1-1') // 大天 6/6
+    const hand = [tile('t9-1'), tile('t10-1')] // 一三1/3 4点、二板2/2 4点，均无 6 端
+    expect(aiChoosePlay(hand, table, { isLeadFirst: false })).toBeNull()
+  })
 })
 
 describe('aiChoosePlay 头牌首出', () => {
@@ -36,5 +41,10 @@ describe('aiChooseDiscard 扣牌', () => {
     const choice = aiChooseDiscard(hand, table)
     expect(choice.action).toBe('discard')
     expect(['t9-1', 't10-1']).toContain(choice.tileId)
+  })
+  it('手里有能接上的活牌时返回 null（不能扣活牌）', () => {
+    const table = tile('t1-1') // 大天 6/6
+    const hand = [tile('t4-1'), tile('t9-1')] // 红十4/6 可接、一三1/3 不可接
+    expect(aiChooseDiscard(hand, table)).toBeNull()
   })
 })
