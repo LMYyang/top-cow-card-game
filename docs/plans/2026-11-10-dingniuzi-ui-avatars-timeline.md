@@ -10,7 +10,7 @@
 
 **工作目录:** `D:\demo\top-cow-card-game`（以下所有相对路径基于此；命令用 Unix bash 语法；文件操作用 Windows 绝对路径）
 
-**设计文档:** `D:\demo\chit-quotationapproval\docs\superpowers\specs\2026-11-10-dingniuzi-ui-avatars-timeline.md`
+**设计文档:** `D:\demo\top-cow-card-game\docs\specs\2026-11-10-dingniuzi-ui-avatars-timeline.md`
 
 ---
 
@@ -494,7 +494,7 @@ Expected: 构建成功，产出 `dist/build/h5`
 
 - [ ] **Step 3: 规格符合性核对**
 
-对照 `D:\demo\chit-quotationapproval\docs\superpowers\specs\2026-11-10-dingniuzi-ui-avatars-timeline.md` 逐条核对：
+对照 `D:\demo\top-cow-card-game\docs\specs\2026-11-10-dingniuzi-ui-avatars-timeline.md` 逐条核对：
 - §2 头像：四家四色（金红青紫）、md/sm 两尺寸、SEAT_COLORS 具名导出、剪影象牙白
 - §2.2 接入：OpponentZone seat prop、HandArea 金头像、结算行 sm 头像
 - §3 时间线：纵向换列、最新牌金描边、扣牌游戏中牌背/结算翻开、座位色点、红八双出共享色点、空态文案
