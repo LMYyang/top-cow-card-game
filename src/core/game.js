@@ -54,7 +54,10 @@ function advanceTurn(g) {
     g.state = 'SETTLE'
     return
   }
-  g.currentSeat = (g.currentSeat + 1) % 4
+  // 跳过空手座位（红八双出会使头牌手牌数比别家少 2，可能提前打空）
+  do {
+    g.currentSeat = (g.currentSeat + 1) % 4
+  } while (g.players[g.currentSeat].hand.length === 0)
 }
 
 /** 某座位头牌首出的合法牌 id 数组（不拉三家约束） */
@@ -67,6 +70,7 @@ export function leadLegalTileIds(g, seat) {
 export function play(g, seat, tileIds) {
   if (g.state !== 'PLAYING') return { ok: false, reason: '非出牌阶段' }
   if (seat !== g.currentSeat) return { ok: false, reason: '没轮到该座位' }
+  if (new Set(tileIds).size !== tileIds.length) return { ok: false, reason: '重复的牌' }
   const player = g.players[seat]
   const tiles = tileIds.map((id) => player.hand.find((t) => t.id === id))
   if (tiles.some((t) => !t)) return { ok: false, reason: '手牌中不存在该牌' }
