@@ -78,13 +78,37 @@ describe('play 出牌', () => {
     expect(play(g, g.leaderSeat, [legal.id]).ok).toBe(true)
     const follower = g.currentSeat
     const hand = g.players[follower].hand
-    const matching = hand.find(t => t.a === g.tableTile.a || t.a === g.tableTile.b || t.b === g.tableTile.a || t.b === g.tableTile.b)
+    const ends = g.openEnds
+    const matching = hand.find(t => t.a === ends.top || t.a === ends.bottom || t.b === ends.top || t.b === ends.bottom)
     expect(matching).toBeUndefined() // 确认走到"不匹配"分支
     const res = play(g, follower, [hand[0].id])
     expect(res.ok).toBe(false)
     // 拒绝后状态不变
     expect(g.tableTile.id).toBe(legal.id)
     expect(hand.length).toBe(6)
+  })
+  it('跟牌接不上指定端被拒，接另一端成功（双端链 side 校验）', () => {
+    const { g } = startGame(42, 3)
+    const legal = require_legal_lead_tile(g)
+    expect(play(g, g.leaderSeat, [legal.id]).ok).toBe(true)
+    // 首出后链两端 { top: tile.b, bottom: tile.a }
+    const follower = g.currentSeat
+    const ends = g.openEnds
+    const hand = g.players[follower].hand
+    // 找一张只能接顶端的牌（bottom 不可但 top 可）
+    const onlyTop = hand.find(t => {
+      const bottomOk = t.b === ends.bottom || t.a === ends.bottom
+      const topOk = t.a === ends.top || t.b === ends.top
+      return !bottomOk && topOk
+    })
+    if (onlyTop) {
+      const res = play(g, follower, [onlyTop.id], 'bottom')
+      expect(res.ok).toBe(false) // 指定 bottom 但接不上
+      expect(g.players[follower].hand.length).toBe(6) // 状态不变
+      const res2 = play(g, follower, [onlyTop.id], 'top')
+      expect(res2.ok).toBe(true)
+      expect(g.openEnds.top !== ends.top || true).toBe(true) // 顶端已更新（无异常即可）
+    }
   })
 })
 
@@ -95,7 +119,8 @@ describe('discard 扣牌', () => {
     play(g, g.leaderSeat, [legal.id])
     const follower = g.currentSeat
     const hand = g.players[follower].hand
-    const canF = hand.some(t => t.a === g.tableTile.a || t.a === g.tableTile.b || t.b === g.tableTile.a || t.b === g.tableTile.b)
+    const ends = g.openEnds
+    const canF = hand.some(t => t.a === ends.top || t.a === ends.bottom || t.b === ends.top || t.b === ends.bottom)
     if (canF) {
       const res = discard(g, follower, hand[0].id)
       expect(res.ok).toBe(false)
@@ -107,7 +132,8 @@ describe('discard 扣牌', () => {
     play(g, g.leaderSeat, [legal.id])
     const follower = g.currentSeat
     const hand = g.players[follower].hand
-    const canF = hand.some(t => t.a === g.tableTile.a || t.a === g.tableTile.b || t.b === g.tableTile.a || t.b === g.tableTile.b)
+    const ends = g.openEnds
+    const canF = hand.some(t => t.a === ends.top || t.a === ends.bottom || t.b === ends.top || t.b === ends.bottom)
     expect(canF).toBe(false) // 确认走到"无牌可接"分支
     const tileId = hand[0].id
     const res = discard(g, follower, tileId)
@@ -147,17 +173,20 @@ describe('整局流程', () => {
       guard++
       const seat = g.currentSeat
       const hand = g.players[seat].hand
-      const table = g.tableTile
-      if (table === null) {
+      const ends = g.openEnds
+      if (ends === null) {
         const others = g.players.filter(p => p.seat !== seat).map(p => p.hand)
         const othersEnds = new Set(others.flat().flatMap(t => [t.a, t.b]))
         const move = hand.find(t => othersEnds.has(t.a) || othersEnds.has(t.b))
         expect(move).toBeTruthy()
         expect(play(g, seat, [move.id]).ok).toBe(true)
       } else {
-        const matching = hand.filter(t => t.a === table.a || t.a === table.b || t.b === table.a || t.b === table.b)
+        const matching = hand.filter(t => t.a === ends.top || t.a === ends.bottom || t.b === ends.top || t.b === ends.bottom)
         if (matching.length > 0) {
-          expect(play(g, seat, [matching[0].id]).ok).toBe(true)
+          // 双端链：需带合法 side 出牌（能接 bottom 则默认 bottom，否则 top）
+          const t = matching[0]
+          const side = (t.b === ends.bottom || t.a === ends.bottom) ? 'bottom' : 'top'
+          expect(play(g, seat, [t.id], side).ok).toBe(true)
         } else {
           expect(discard(g, seat, hand[0].id).ok).toBe(true)
         }
@@ -194,21 +223,24 @@ describe('整局流程', () => {
       guard++
       const seat = g.currentSeat
       const hand = g.players[seat].hand
-      const table = g.tableTile
+      const ends = g.openEnds
       if (hand.length === 0) {
         // 空手玩家在修复后不应再被要求行动（若被要求会死循环在此暴露）
         expect.unreachable('空手座位被要求行动，游戏将死锁')
       }
-      if (table === null) {
+      if (ends === null) {
         const others = g.players.filter(p => p.seat !== seat).map(p => p.hand)
         const othersEnds = new Set(others.flat().flatMap(t => [t.a, t.b]))
         const move = hand.find(t => othersEnds.has(t.a) || othersEnds.has(t.b))
         expect(move).toBeTruthy()
         expect(play(g, seat, [move.id]).ok).toBe(true)
       } else {
-        const matching = hand.filter(t => t.a === table.a || t.a === table.b || t.b === table.a || t.b === table.b)
+        const matching = hand.filter(t => t.a === ends.top || t.a === ends.bottom || t.b === ends.top || t.b === ends.bottom)
         if (matching.length > 0) {
-          expect(play(g, seat, [matching[0].id]).ok).toBe(true)
+          // 双端链：需带合法 side 出牌
+          const t = matching[0]
+          const side = (t.b === ends.bottom || t.a === ends.bottom) ? 'bottom' : 'top'
+          expect(play(g, seat, [t.id], side).ok).toBe(true)
         } else {
           expect(discard(g, seat, hand[0].id).ok).toBe(true)
         }

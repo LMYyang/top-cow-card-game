@@ -1,5 +1,12 @@
 <template>
   <view class="hand-area">
+    <view class="hand-header">
+      <PlayerAvatar :seat="0" size="md" />
+      <view class="header-info">
+        <text class="name">我</text>
+        <text class="counts">牌 {{ hand.length }} · 扣 {{ kept.length }}</text>
+      </view>
+    </view>
     <view v-if="mustDiscard" class="hint warn">无牌可接，请选一张扣下</view>
     <view class="hand">
       <PlayingTile
@@ -13,9 +20,22 @@
     </view>
     <view class="kept-row" v-if="kept.length">
       <text class="kept-label">扣牌：</text>
-      <PlayingTile v-for="t in kept" :key="t.id" :tile="t" size="sm" face-down />
+      <PlayingTile v-for="t in kept" :key="t.id" :tile="null" size="sm" face-down />
     </view>
     <view class="actions" v-if="myTurn">
+      <view v-if="bothEnds" class="side-picker">
+        <text class="side-label">放置端：</text>
+        <button
+          v-for="opt in sideOptions"
+          :key="opt.side"
+          class="btn-side"
+          :class="{ active: side === opt.side }"
+          @click="$emit('choose-side', opt.side)"
+        >{{ opt.side === 'top' ? '上端' : '下端' }}</button>
+      </view>
+      <view v-else-if="sideOptions.length === 1" class="side-fixed">
+        <text class="side-label">将接{{ sideOptions[0].side === 'top' ? '上' : '下' }}端</text>
+      </view>
       <button class="btn-primary" :disabled="!selectedId || mustDiscard" @click="$emit('confirm-play')">出牌</button>
       <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('confirm-discard')">扣牌</button>
     </view>
@@ -23,24 +43,55 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import PlayingTile from './PlayingTile.vue'
+import PlayerAvatar from './PlayerAvatar.vue'
+import { placeSides } from '../core/rules.js'
 
-defineProps({
+const props = defineProps({
   hand: Array,
   kept: Array,
   playableIds: Array,
   myTurn: Boolean,
   mustDiscard: Boolean,
   selectedId: String,
+  side: { type: String, default: 'bottom' }, // 我选的放置端 bottom | top
+  openEnds: { type: Object, default: null }, // 链两端待接点 { top, bottom }，首出前 null
 })
-defineEmits(['select', 'confirm-play', 'confirm-discard'])
+defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side'])
+
+const selectedTile = computed(() =>
+  props.selectedId ? (props.hand || []).find((x) => x.id === props.selectedId) || null : null
+)
+
+/**
+ * 选中的牌可放置端选项：首出前为 []（无选择器）；可接时为 placeSides 结果（0/1/2 项）。
+ * 1 项 = 只有一端可接，不显示选择器（出牌时按唯一端自动放置）；2 项 = 两端都可接，显示选择器。
+ */
+const sideOptions = computed(() => {
+  if (!props.myTurn || !selectedTile.value || !props.openEnds) return []
+  return placeSides(selectedTile.value, props.openEnds)
+})
+const bothEnds = computed(() => sideOptions.value.length === 2)
 </script>
 
 <style scoped>
 .hand-area { display: flex; flex-direction: column; align-items: center; gap: 12rpx; padding: 16rpx 0; }
+.hand-header { width: 100%; display: flex; justify-content: center; align-items: center; gap: 12rpx; }
+.header-info { display: flex; flex-direction: column; }
+.name { font-size: 24rpx; }
+.counts { font-size: 20rpx; color: #b0a685; }
 .hint.warn { color: #e0a030; font-size: 24rpx; }
 .hand { display: flex; gap: 10rpx; justify-content: center; flex-wrap: wrap; }
 .kept-row { display: flex; align-items: center; gap: 8rpx; }
 .kept-label { font-size: 22rpx; color: #b0a685; }
-.actions { display: flex; gap: 20rpx; }
+.actions { display: flex; gap: 20rpx; align-items: center; flex-wrap: wrap; justify-content: center; }
+.side-picker { display: flex; align-items: center; gap: 8rpx; }
+.side-fixed { display: flex; align-items: center; }
+.side-label { font-size: 22rpx; color: #b0a685; }
+.btn-side {
+  font-size: 22rpx; padding: 6rpx 20rpx; margin: 0;
+  background: #3a2c14; color: #b0a685; border-radius: 10rpx; border: 2rpx solid #5a4a32;
+}
+.btn-side.active { background: #c9a227; color: #fff; border-color: #c9a227; }
 </style>

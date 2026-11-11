@@ -1,23 +1,23 @@
 <!-- src/components/PlayingTile.vue -->
 <template>
-  <view class="tile" :class="[sizeClass, { selected, dimmed, faceDown }]" @click="$emit('tap')">
+  <view class="tile" :class="[sizeClass, { selected, dimmed, faceDown, horizontal: isHorizontal, mirrored }]" @click="$emit('tap')">
     <template v-if="!faceDown">
       <view class="half">
         <view
-          v-for="pos in layoutB"
-          :key="'b' + pos"
+          v-for="pos in layoutTop"
+          :key="'t' + pos"
           class="pip"
-          :class="colorB"
+          :class="colorTop"
           :style="pipStyle(pos)"
         />
       </view>
       <view class="divider" />
       <view class="half">
         <view
-          v-for="pos in layoutA"
-          :key="'a' + pos"
+          v-for="pos in layoutBottom"
+          :key="'b' + pos"
           class="pip"
-          :class="colorA"
+          :class="colorBottom"
           :style="pipStyle(pos)"
         />
       </view>
@@ -35,14 +35,19 @@ const props = defineProps({
   faceDown: { type: Boolean, default: false },
   selected: { type: Boolean, default: false },
   dimmed: { type: Boolean, default: false },
-  size: { type: String, default: 'md' }, // sm | md | lg
+  size: { type: String, default: 'md' }, // sm | md | lg | xs | xxs
+  horizontal: { type: Boolean, default: false }, // 横放（旋转 90°），默认竖放；由调用方显式指定
+  mirrored: { type: Boolean, default: false }, // 上下镜像：b 在下、a 在上（点数对接用，无旋转动画）
 })
 
+const isHorizontal = computed(() => props.horizontal)
+
 const sizeClass = computed(() => `tile-${props.size}`)
-const layoutA = computed(() => (props.tile ? PIP_LAYOUTS[props.tile.a] : []))
-const layoutB = computed(() => (props.tile ? PIP_LAYOUTS[props.tile.b] : []))
-const colorA = computed(() => (props.tile ? pipColor(props.tile.a) : ''))
-const colorB = computed(() => (props.tile ? pipColor(props.tile.b) : ''))
+// 上半区点数：未镜像显示 b，镜像后显示 a；下半区相反
+const layoutTop = computed(() => (props.tile ? PIP_LAYOUTS[props.mirrored ? props.tile.a : props.tile.b] : []))
+const layoutBottom = computed(() => (props.tile ? PIP_LAYOUTS[props.mirrored ? props.tile.b : props.tile.a] : []))
+const colorTop = computed(() => (props.tile ? pipColor(props.mirrored ? props.tile.a : props.tile.b) : ''))
+const colorBottom = computed(() => (props.tile ? pipColor(props.mirrored ? props.tile.b : props.tile.a) : ''))
 
 function pipStyle(pos) {
   const row = Math.floor(pos / 3)
@@ -66,6 +71,10 @@ function pipStyle(pos) {
   transition: transform 0.15s, box-shadow 0.15s;
 }
 .tile-sm { width: 64rpx; height: 96rpx; border-radius: 8rpx; }
+.tile-xs { width: 48rpx; height: 72rpx; border-radius: 6rpx; }
+.tile-xs .pip { width: 8rpx; height: 8rpx; }
+.tile-xxs { width: 36rpx; height: 54rpx; border-radius: 6rpx; }
+.tile-xxs .pip { width: 6rpx; height: 6rpx; }
 .tile-lg { width: 128rpx; height: 192rpx; }
 
 .tile.selected {
@@ -73,6 +82,11 @@ function pipStyle(pos) {
   box-shadow: 0 8rpx 16rpx rgba(0, 0, 0, 0.6), 0 0 0 4rpx #c9a227;
 }
 .tile.dimmed { opacity: 0.35; }
+
+/* 横放：旋转 90°（由调用方显式指定），牌面点阵仍保持竖排网格渲染 */
+.tile.horizontal { transform: rotate(90deg); }
+.tile.selected.horizontal { transform: translateY(-16rpx) rotate(90deg); }
+/* 镜像（mirrored）通过模板交换上下半区渲染，无 transform，避免与 selected/horizontal 组合冲突 */
 
 .half {
   flex: 1;

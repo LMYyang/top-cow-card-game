@@ -1,10 +1,12 @@
 import { dealGroups } from './deck.js'
-import { playableForLead, canFollow, mustDiscard, diceToSeatOffset, settle } from './rules.js'
+import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, diceToSeatOffset, settle } from './rules.js'
 
 /**
  * 游戏状态机（纯 JS、平台无关、可变状态对象）。
  * state: 'ROLLING' | 'PLAYING' | 'SETTLE'
  * 动作函数都返回 { ok: boolean, reason?: string }，非法动作不改状态。
+ * 桌面为双端接龙链：openEnds = { top, bottom } 为链两端待接点数；
+ * 跟牌可接在任一端，由 play 的 side 参数（'bottom'|'top'）指定，缺省 'bottom'。
  */
 
 export function createGame(rng = Math.random, rollerSeat = 0) {
@@ -14,7 +16,8 @@ export function createGame(rng = Math.random, rollerSeat = 0) {
     roundNo: 1,
     rollerSeat, // 第一局默认 0；连续局传入上一局赢家
     leaderSeat: null,
-    tableTile: null,
+    tableTile: null, // 链上最新出的一张牌（兼容保留）
+    openEnds: null, // { top, bottom } 链两端待接点数；首出前为 null
     tableHistory: [], // [{ seat, tiles: [tile] }] 出牌历史（扣牌为 { seat, discarded: tile }）
     players: [0, 1, 2, 3].map((seat) => ({ seat, hand: [], kept: [] })),
     currentSeat: null,
@@ -44,6 +47,7 @@ export function rollDice(g, dice) {
   g.leaderSeat = leaderSeat
   g.currentSeat = leaderSeat
   g.tableTile = null
+  g.openEnds = null
   g.state = 'PLAYING'
   return { ok: true, leaderSeat }
 }
@@ -66,8 +70,8 @@ export function leadLegalTileIds(g, seat) {
   return playableForLead(g.players[seat].hand, others).map((t) => t.id)
 }
 
-/** 出牌。tileIds: [id] 或 [id, id]（仅头牌首出双张红八） */
-export function play(g, seat, tileIds) {
+/** 出牌。tileIds: [id] 或 [id, id]（仅头牌首出双张红八）；跟牌时 side: 'bottom'|'top' 指定接哪端（缺省 bottom） */
+export function play(g, seat, tileIds, side = 'bottom') {
   if (g.state !== 'PLAYING') return { ok: false, reason: '非出牌阶段' }
   if (seat !== g.currentSeat) return { ok: false, reason: '没轮到该座位' }
   if (new Set(tileIds).size !== tileIds.length) return { ok: false, reason: '重复的牌' }
@@ -83,7 +87,8 @@ export function play(g, seat, tileIds) {
     return { ok: false, reason: '出牌数量非法' }
   }
 
-  if (g.tableTile === null) {
+  let placement = { side: 'bottom', mirrored: false }
+  if (g.openEnds === null) {
     if (seat !== g.leaderSeat) return { ok: false, reason: '首出必须是头牌' }
     if (tiles.length === 1) {
       const legal = leadLegalTileIds(g, seat)
@@ -93,14 +98,39 @@ export function play(g, seat, tileIds) {
     }
   } else {
     if (tiles.length !== 1) return { ok: false, reason: '跟牌只能出一张' }
-    if (!canFollow(tiles[0], g.tableTile)) {
-      return { ok: false, reason: '这张牌接不上桌面牌' }
+    const options = placeSides(tiles[0], g.openEnds)
+    if (options.length === 0) {
+      return { ok: false, reason: '这张牌接不上桌面牌（两端都不匹配）' }
+    }
+    const chosen = options.find((o) => o.side === side)
+    if (!chosen) {
+      return { ok: false, reason: `这张牌接不上${side === 'top' ? '顶' : '底'}端` }
+    }
+    placement = chosen
+  }
+
+  const tile = tiles[tiles.length - 1]
+  player.hand = player.hand.filter((t) => !tileIds.includes(t.id))
+  g.tableTile = tile
+
+  if (g.openEnds === null) {
+    // 首出：链两端 = 该牌两端（未镜像渲染：上端 b、下端 a）
+    g.openEnds = { top: tile.b, bottom: tile.a }
+  } else if (placement.side === 'bottom') {
+    // 接在底端：新牌朝上端（mirrored ? a : b）与旧 bottom 对接，朝下端成为新 bottom
+    g.openEnds = {
+      top: g.openEnds.top,
+      bottom: placement.mirrored ? tile.b : tile.a,
+    }
+  } else {
+    // 接在顶端：新牌朝下端（mirrored ? b : a）与旧 top 对接，朝上端成为新 top
+    g.openEnds = {
+      top: placement.mirrored ? tile.a : tile.b,
+      bottom: g.openEnds.bottom,
     }
   }
 
-  player.hand = player.hand.filter((t) => !tileIds.includes(t.id))
-  g.tableTile = tiles[tiles.length - 1]
-  g.tableHistory.push({ seat, tiles })
+  g.tableHistory.push({ seat, tiles, side: placement.side, mirrored: placement.mirrored })
   advanceTurn(g)
   return { ok: true }
 }
@@ -112,10 +142,10 @@ export function discard(g, seat, tileId) {
   const player = g.players[seat]
   const tile = player.hand.find((t) => t.id === tileId)
   if (!tile) return { ok: false, reason: '手牌中不存在该牌' }
-  if (g.tableTile === null) {
+  if (g.openEnds === null) {
     return { ok: false, reason: '头牌首出不能扣牌' }
   }
-  if (!mustDiscard(player.hand, g.tableTile)) {
+  if (!mustDiscardEnds(player.hand, g.openEnds)) {
     return { ok: false, reason: '不能扣活牌：手中有可接的牌' }
   }
   player.hand = player.hand.filter((t) => t.id !== tileId)
@@ -133,6 +163,7 @@ export function viewOf(g, viewerSeat) {
     rollerSeat: g.rollerSeat,
     currentSeat: g.currentSeat,
     tableTile: g.tableTile,
+    openEnds: g.openEnds,
     myHand: g.players[viewerSeat].hand,
     myKept: g.players[viewerSeat].kept,
     opponents: g.players

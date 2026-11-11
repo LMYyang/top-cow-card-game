@@ -2,7 +2,7 @@
 import { reactive, computed } from 'vue'
 import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds } from '../core/game.js'
 import { aiChoosePlay, aiChooseDiscard } from '../core/ai.js'
-import { mustDiscard as coreMustDiscard, playableTiles as corePlayableTiles } from '../core/rules.js'
+import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
 
 /**
  * 单机局管理。真人固定 seat 0。
@@ -39,9 +39,9 @@ export function useGame() {
     () => view.state === 'PLAYING' && view.currentSeat === 0
   )
 
-  /** 我必须扣牌（无牌可接且桌面有牌）：委托 core 规则 */
+  /** 我必须扣牌（链已开出且我无任何可接端的牌）：委托 core 规则（双端） */
   const mustDiscard = computed(
-    () => myTurn.value && view.tableTile !== null && coreMustDiscard(view.myHand, view.tableTile)
+    () => myTurn.value && view.openEnds !== null && coreMustDiscardEnds(view.myHand, view.openEnds)
   )
 
   /**
@@ -52,10 +52,10 @@ export function useGame() {
    */
   const playableIds = computed(() => {
     if (!myTurn.value) return []
-    if (view.tableTile === null) {
+    if (view.openEnds === null) {
       return leadLegalTileIds(g, 0) // core 导出的合法首出（不拉三家）
     }
-    return corePlayableTiles(view.myHand, view.tableTile).map((t) => t.id)
+    return corePlayableTilesEnds(view.myHand, view.openEnds).map((t) => t.id)
   })
 
   /** 开局掷骰（点击"掷骰子"按钮触发） */
@@ -75,10 +75,10 @@ export function useGame() {
     }, 1200)
   }
 
-  /** 我出牌 */
-  function myPlay(tileId) {
+  /** 我出牌。side: 'bottom'|'top' 跟牌放置端（仅链已开出时有意义），缺省 bottom */
+  function myPlay(tileId, side = 'bottom') {
     if (!myTurn.value || view.state !== 'PLAYING') return { ok: false }
-    const res = play(g, 0, [tileId])
+    const res = play(g, 0, [tileId], side)
     if (res.ok) {
       fx.lastMove = { seat: 0, tileIds: [tileId] }
       syncView()
@@ -111,6 +111,19 @@ export function useGame() {
           rounds: prev.rounds + 1,
           totalScore: prev.totalScore + my,
         })
+        // 历史记录：追加本局明细（时间、四人角色与得分、累计积分），最新在前，最多留 50 局
+        const prevHistory = uni.getStorageSync('dingniuzi_history') || []
+        let running = prevHistory.length > 0 ? prevHistory[0].totalsAfter : { 0: 0, 1: 0, 2: 0, 3: 0 }
+        const totalsAfter = {}
+        for (const s of [0, 1, 2, 3]) totalsAfter[s] = (running[s] || 0) + (view.result.scores[s] || 0)
+        const entry = {
+          time: Date.now(),
+          scores: view.result.scores, // { seat: number }
+          roles: Object.fromEntries(view.result.ranks.map((r) => [r.seat, r.role])),
+          points: Object.fromEntries(view.result.ranks.map((r) => [r.seat, r.points])), // 扣点
+          totalsAfter,
+        }
+        uni.setStorageSync('dingniuzi_history', [entry, ...prevHistory].slice(0, 50))
         fx.settleShow = true
       }
       return
@@ -121,17 +134,16 @@ export function useGame() {
     setTimeout(() => {
       if (g.state !== 'PLAYING' || g.currentSeat !== seat) return
       const hand = g.players[seat].hand
-      const table = g.tableTile
-      if (table === null) {
+      if (g.openEnds === null) {
         // AI 头牌首出：aiChoosePlay 内部已处理"不拉三家"的合法牌过滤及兜底
         const choice = aiChoosePlay(hand, null, { isLeadFirst: true, otherHands: g.players.filter(p => p.seat !== seat).map(p => p.hand) })
-        if (choice) play(g, seat, choice.tileIds)
+        if (choice) play(g, seat, choice.tileIds, choice.side)
       } else {
-        const choice = aiChoosePlay(hand, table, { isLeadFirst: false })
+        const choice = aiChoosePlay(hand, g.openEnds, { isLeadFirst: false })
         if (choice) {
-          play(g, seat, choice.tileIds)
+          play(g, seat, choice.tileIds, choice.side)
         } else {
-          const d = aiChooseDiscard(hand, table)
+          const d = aiChooseDiscard(hand, g.openEnds)
           if (d) discard(g, seat, d.tileId)
         }
       }

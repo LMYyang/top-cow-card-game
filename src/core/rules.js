@@ -11,14 +11,47 @@ export function canFollow(candidate, tableTile) {
          candidate.b === tableTile.a || candidate.b === tableTile.b
 }
 
+/** 跟牌判定（双端链）：candidate 任一端 === 链两端任一待接端点 */
+export function canFollowEnds(candidate, openEnds) {
+  return candidate.a === openEnds.bottom || candidate.a === openEnds.top ||
+         candidate.b === openEnds.bottom || candidate.b === openEnds.top
+}
+
 /** 手牌中所有可跟的牌 */
 export function playableTiles(hand, tableTile) {
   return hand.filter((t) => canFollow(t, tableTile))
 }
 
+/** 手牌中所有可跟的牌（双端链版）：任一端点匹配链两端待接点即可 */
+export function playableTilesEnds(hand, openEnds) {
+  return hand.filter((t) => canFollowEnds(t, openEnds))
+}
+
 /** 是否必须扣牌：手里没有任何可跟的牌 */
 export function mustDiscard(hand, tableTile) {
   return playableTiles(hand, tableTile).length === 0
+}
+
+/** 是否必须扣牌（双端链版） */
+export function mustDiscardEnds(hand, openEnds) {
+  return playableTilesEnds(hand, openEnds).length === 0
+}
+
+/**
+ * 出牌端选择：给一张可跟的牌和当前链两端待接点，判断它能接哪端。
+ * @returns {{ side: 'bottom'|'top', mirrored: boolean }[]} 可放置的端列表（0-2 个）
+ *   mirrored=true 表示需上下镜像渲染使点数相对对接（牌 a 端为对接端）。
+ *   未镜像时未翻转牌朝上端是 b：底端对接端为牌 b；镜像后朝上端是 a：底端对接端为牌 a。
+ */
+export function placeSides(tile, openEnds) {
+  const sides = []
+  // 底端：牌的"朝上端"必须等于 openEnds.bottom；朝上端未镜像=b，镜像=a
+  if (tile.b === openEnds.bottom) sides.push({ side: 'bottom', mirrored: false })
+  else if (tile.a === openEnds.bottom) sides.push({ side: 'bottom', mirrored: true })
+  // 顶端：牌的"朝下端"必须等于 openEnds.top；朝下端未镜像=a，镜像=b
+  if (tile.a === openEnds.top) sides.push({ side: 'top', mirrored: false })
+  else if (tile.b === openEnds.top) sides.push({ side: 'top', mirrored: true })
+  return sides
 }
 
 /** 头牌首出可出的牌：不能"拉"三家——其余三家任一家持有该牌任一端点才可出 */

@@ -2,18 +2,36 @@ import { describe, it, expect } from 'vitest'
 import { aiChoosePlay, aiChooseDiscard } from '../src/core/ai.js'
 import { tile } from './helpers.js'
 
-describe('aiChoosePlay 跟牌', () => {
+describe('aiChoosePlay 跟牌（双端链）', () => {
   it('多张可接时出点数最高的', () => {
-    const table = tile('t1-1') // 大天 6/6
+    // 链两端 { top: 6, bottom: 6 }（大天 6/6 首出后）
+    const openEnds = { top: 6, bottom: 6 }
     const hand = [tile('t9-1'), tile('t4-1'), tile('t7-1')] // 一三4点、红十10点、一六7点
-    const choice = aiChoosePlay(hand, table, { isLeadFirst: false })
+    const choice = aiChoosePlay(hand, openEnds, { isLeadFirst: false })
     expect(choice.action).toBe('play')
     expect(choice.tileIds).toEqual(['t4-1']) // 红十 10 点最高
   })
+  it('只有顶端可接时选 top', () => {
+    // 链 { top: 5, bottom: 1 }；一五 1/5（a=1, b=5）：
+    // 底端需朝上端=1：未镜像 b=5≠1，镜像 a=1=1 → bottom 可（镜像）；
+    // 改用仅顶端可接的牌：虎头 5/6（a=5, b=6），链 { top: 5, bottom: 2 }
+    // 底端需朝上端=2：b=6≠2、a=5≠2 → bottom 不可；顶端需朝下端=5：未镜像 a=5=5 → top 可
+    const openEnds2 = { top: 5, bottom: 2 }
+    const hand2 = [tile('t2-1')] // 虎头 5/6
+    const choice2 = aiChoosePlay(hand2, openEnds2, { isLeadFirst: false })
+    expect(choice2.side).toBe('top')
+  })
+  it('两端都可接时默认选 bottom', () => {
+    // 链 { top: 3, bottom: 3 }；长三 3/3 两端都能接
+    const openEnds = { top: 3, bottom: 3 }
+    const hand = [tile('t6-1')] // 长三 3/3
+    const choice = aiChoosePlay(hand, openEnds, { isLeadFirst: false })
+    expect(choice.side).toBe('bottom')
+  })
   it('没有可接的牌时返回 null', () => {
-    const table = tile('t1-1') // 大天 6/6
+    const openEnds = { top: 6, bottom: 6 }
     const hand = [tile('t9-1'), tile('t10-1')] // 一三1/3 4点、二板2/2 4点，均无 6 端
-    expect(aiChoosePlay(hand, table, { isLeadFirst: false })).toBeNull()
+    expect(aiChoosePlay(hand, openEnds, { isLeadFirst: false })).toBeNull()
   })
 })
 
@@ -34,17 +52,17 @@ describe('aiChoosePlay 头牌首出', () => {
   })
 })
 
-describe('aiChooseDiscard 扣牌', () => {
+describe('aiChooseDiscard 扣牌（双端链）', () => {
   it('扣点数最低的牌', () => {
-    const table = tile('t1-1') // 6/6，手里这些都接不上
+    const openEnds = { top: 6, bottom: 6 } // 手里这些都接不上
     const hand = [tile('t9-1'), tile('t10-1'), tile('t8-1')] // 4点、4点、6点
-    const choice = aiChooseDiscard(hand, table)
+    const choice = aiChooseDiscard(hand, openEnds)
     expect(choice.action).toBe('discard')
     expect(['t9-1', 't10-1']).toContain(choice.tileId)
   })
   it('手里有能接上的活牌时返回 null（不能扣活牌）', () => {
-    const table = tile('t1-1') // 大天 6/6
+    const openEnds = { top: 6, bottom: 6 } // 大天 6/6 开链后
     const hand = [tile('t4-1'), tile('t9-1')] // 红十4/6 可接、一三1/3 不可接
-    expect(aiChooseDiscard(hand, table)).toBeNull()
+    expect(aiChooseDiscard(hand, openEnds)).toBeNull()
   })
 })

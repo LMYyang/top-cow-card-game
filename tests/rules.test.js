@@ -1,9 +1,60 @@
 import { describe, it, expect } from 'vitest'
 import {
   canFollow, playableTiles, mustDiscard, playableForLead,
+  canFollowEnds, playableTilesEnds, mustDiscardEnds, placeSides,
   settle, diceToSeatOffset, seatName,
 } from '../src/core/rules.js'
 import { tile } from './helpers.js'
+
+describe('canFollowEnds 跟牌判定（双端链）', () => {
+  it('任一端点与链两端任一待接点相同即可接', () => {
+    const openEnds = { top: 6, bottom: 2 }
+    expect(canFollowEnds(tile('t4-1'), openEnds)).toBe(true)  // 红十 4/6：b=6 匹配 top
+    expect(canFollowEnds(tile('t13-1'), openEnds)).toBe(true) // 二六 2/6：a=2 匹配 bottom
+    expect(canFollowEnds(tile('t9-1'), openEnds)).toBe(false) // 一三 1/3：均不匹配
+  })
+})
+
+describe('playableTilesEnds / mustDiscardEnds（双端链）', () => {
+  it('只列出能接链两端的牌', () => {
+    const openEnds = { top: 2, bottom: 2 }
+    const hand = [tile('t13-1'), tile('t1-1'), tile('t9-1')] // 二六(2/6)、大天(6/6)、一三(1/3)
+    const result = playableTilesEnds(hand, openEnds)
+    expect(result.map(t => t.id)).toEqual(['t13-1'])
+  })
+  it('无牌可接时必须扣牌', () => {
+    const openEnds = { top: 2, bottom: 2 }
+    const hand = [tile('t9-1')] // 一三 1/3
+    expect(mustDiscardEnds(hand, openEnds)).toBe(true)
+  })
+})
+
+describe('placeSides 放置端判定', () => {
+  it('仅底端可接', () => {
+    // 链 { top: 5, bottom: 6 }；红十 4/6：b=6 → bottom 未镜像；a=4/b=6 均非 5 → 顶端不可
+    const sides = placeSides(tile('t4-1'), { top: 5, bottom: 6 })
+    expect(sides).toEqual([{ side: 'bottom', mirrored: false }])
+  })
+  it('仅顶端可接（需镜像）', () => {
+    // 链 { top: 4, bottom: 2 }；红十 4/6：朝下端未镜像=a=4 匹配 top 未镜像
+    const sides = placeSides(tile('t4-1'), { top: 4, bottom: 2 })
+    expect(sides).toEqual([{ side: 'top', mirrored: false }])
+  })
+  it('两端都可接时返回两个选项', () => {
+    // 链 { top: 6, bottom: 4 }；红十 4/6（a=4, b=6）：
+    // 底端需朝上端=bottom：未镜像 b=6≠4，镜像 a=4=4 → bottom+镜像；
+    // 顶端需朝下端=top：未镜像 a=4≠6，镜像 b=6=6 → top+镜像
+    const sides = placeSides(tile('t4-1'), { top: 6, bottom: 4 })
+    expect(sides).toEqual([
+      { side: 'bottom', mirrored: true },
+      { side: 'top', mirrored: true },
+    ])
+  })
+  it('两端都接不上返回空', () => {
+    const sides = placeSides(tile('t9-1'), { top: 6, bottom: 6 }) // 一三 1/3
+    expect(sides).toEqual([])
+  })
+})
 
 describe('canFollow 跟牌判定', () => {
   it('任一端点与桌面牌任一端点相同即可接', () => {
