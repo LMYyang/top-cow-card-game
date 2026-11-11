@@ -1,12 +1,12 @@
 <!-- src/pages/game/game.vue -->
 <template>
-  <view class="table">
+  <view class="table" :class="{ revealing: fx.revealKept }" @click="onRevealTap">
     <!-- 对家（上） -->
-    <OpponentZone position="top" :seat="2" :label="labelOf(2)" :hand-count="opponentBySeat(2).handCount" :kept-count="opponentBySeat(2).keptCount" :is-leader="view.leaderSeat === 2" :last-move="lastMoveOf(2)" :discard-history="discardEntries" />
+    <OpponentZone position="top" :seat="2" :label="labelOf(2)" :hand-count="opponentBySeat(2).handCount" :kept-count="opponentBySeat(2).keptCount" :is-leader="view.leaderSeat === 2" :last-move="lastMoveOf(2)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
 
     <view class="middle-row">
       <!-- 上家（左） -->
-      <OpponentZone position="left" :seat="3" :label="labelOf(3)" :hand-count="opponentBySeat(3).handCount" :kept-count="opponentBySeat(3).keptCount" :is-leader="view.leaderSeat === 3" :last-move="lastMoveOf(3)" :discard-history="discardEntries" />
+      <OpponentZone position="left" :seat="3" :label="labelOf(3)" :hand-count="opponentBySeat(3).handCount" :kept-count="opponentBySeat(3).keptCount" :is-leader="view.leaderSeat === 3" :last-move="lastMoveOf(3)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
 
       <!-- 中央 -->
       <CenterArea>
@@ -29,7 +29,7 @@
       </CenterArea>
 
       <!-- 下家（右） -->
-      <OpponentZone position="right" :seat="1" :label="labelOf(1)" :hand-count="opponentBySeat(1).handCount" :kept-count="opponentBySeat(1).keptCount" :is-leader="view.leaderSeat === 1" :last-move="lastMoveOf(1)" :discard-history="discardEntries" />
+      <OpponentZone position="right" :seat="1" :label="labelOf(1)" :hand-count="opponentBySeat(1).handCount" :kept-count="opponentBySeat(1).keptCount" :is-leader="view.leaderSeat === 1" :last-move="lastMoveOf(1)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
     </view>
 
     <!-- 我的手牌 -->
@@ -42,11 +42,15 @@
       :selected-id="selectedId"
       :side="mySide"
       :open-ends="view.openEnds"
+      :reveal-kept="fx.revealKept"
       @select="selectedId = $event"
       @choose-side="mySide = $event"
       @confirm-play="onConfirmPlay"
       @confirm-discard="onConfirmDiscard"
-    />
+    >
+      <!-- 亮牌阶段提示：位于"本局结束"与我的头像之间，等待玩家点击任意处继续 -->
+      <view v-if="fx.revealKept && !fx.settleShow" class="tap-hint">点击屏幕任意处继续</view>
+    </HandArea>
 
     <!-- 结算覆盖层 -->
     <view v-if="fx.settleShow && view.result" class="settle-overlay">
@@ -105,6 +109,12 @@ const diceResultText = computed(() => {
 function clearTimers() {
   if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
   if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
+}
+/** 亮牌阶段（结算弹窗前）：点击屏幕任意位置 → 弹出结算 */
+function onRevealTap() {
+  if (fx.revealKept && !fx.settleShow && view.result) {
+    fx.settleShow = true
+  }
 }
 watch(
   () => fx.diceRolling,
@@ -203,7 +213,9 @@ function restart() {
   uni.redirectTo({ url: '/pages/game/game' })
 }
 function goHome() {
-  uni.navigateBack()
+  // 不用 navigateBack：restart 走 redirectTo 重开本页，H5 下历史栈里会残留上一局游戏页，
+  // navigateBack 会退回栈里前一个 game 实例（看起来像"又跳回游戏"）。reLaunch 清空页面栈直达主菜单。
+  uni.reLaunch({ url: '/pages/index/index' })
 }
 </script>
 
@@ -215,7 +227,11 @@ function goHome() {
   padding: 20rpx;
   box-sizing: border-box;
 }
-.middle-row { flex: 1; display: flex; min-height: 0; }
+.middle-row { flex: 1; display: flex; min-height: 0; padding-bottom: 8rpx; }
+/* 局末亮牌阶段：各区扣牌翻开后行数变多、整体变高，取消 flex 压缩让内容自然撑高，
+   防止窄视口下对手区亮出的牌面底部被裁（页面可自然向下延展） */
+.table.revealing > * { flex-shrink: 0; }
+.table.revealing .middle-row { flex: 1 0 auto; min-height: 340rpx; }
 .dice { font-size: 96rpx; line-height: 1; margin-bottom: 24rpx; color: #c9a227; }
 /* 掷骰中：快速翻转跳动 */
 .dice.rolling { animation: tumble 0.35s infinite; }
@@ -253,6 +269,18 @@ function goHome() {
   background: rgba(0, 0, 0, 0.72);
   display: flex; align-items: center; justify-content: center;
   z-index: 99;
+}
+/* 亮牌阶段等待点击的提示：位于中央"本局结束"与我的头像之间（左右离边缘等距=水平居中），呼吸闪烁吸引注意 */
+.tap-hint {
+  position: fixed; left: 0; right: 0; bottom: 30%;
+  text-align: center;
+  color: #c9a227; font-size: 28rpx; font-weight: bold;
+  animation: tap-pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes tap-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 .settle-card {
   background: #4a3418;

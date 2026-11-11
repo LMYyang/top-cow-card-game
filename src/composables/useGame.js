@@ -18,6 +18,7 @@ export function useGame() {
     diceRolling: false,
     lastMove: null, // { seat, tileIds }
     settleShow: false,
+    revealKept: false, // 局末亮牌阶段：翻开所有人扣的牌（结算弹窗前展示）
   })
 
   const view = reactive(viewOf(g, 0))
@@ -127,7 +128,10 @@ export function useGame() {
           totalsAfter,
         }
         uni.setStorageSync('dingniuzi_history', [entry, ...prevHistory].slice(0, 50))
-        fx.settleShow = true
+        // 局末节奏：先停 800ms 让最后一手落定 → 亮出所有人扣的牌 → 等玩家点击屏幕任意位置 → 再弹结算
+        setTimeout(() => {
+          fx.revealKept = true
+        }, 800)
       }
       return
     }

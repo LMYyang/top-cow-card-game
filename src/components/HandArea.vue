@@ -1,7 +1,10 @@
 <template>
   <view class="hand-area">
     <view class="hand-header">
-      <PlayerAvatar :seat="0" size="md" />
+      <view class="avatar-wrap">
+        <PlayerAvatar :seat="0" size="md" />
+        <slot /> <!-- 亮牌阶段等提示：显示在头像正上方 -->
+      </view>
       <view class="header-info">
         <text class="name">我</text>
         <text class="counts">牌 {{ hand.length }} · 扣 {{ kept.length }}</text>
@@ -20,7 +23,13 @@
     </view>
     <view class="kept-row" v-if="kept.length">
       <text class="kept-label">扣牌：</text>
-      <PlayingTile v-for="t in kept" :key="t.id" :tile="null" size="sm" face-down />
+      <PlayingTile
+        v-for="t in kept"
+        :key="t.id"
+        :tile="revealKept ? t : null"
+        size="sm"
+        :face-down="!revealKept"
+      />
     </view>
     <view class="actions" v-if="myTurn">
       <view v-if="bothEnds" class="side-picker">
@@ -54,6 +63,7 @@ const props = defineProps({
   selectedId: String,
   side: { type: String, default: 'bottom' }, // 我选的放置端 bottom | top
   openEnds: { type: Object, default: null }, // 链两端待接点 { top, bottom }，首出前 null
+  revealKept: { type: Boolean, default: false }, // 局末亮牌：翻开我扣的牌面
 })
 defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side'])
 
@@ -78,6 +88,8 @@ const bothEnds = computed(() => sideOptions.value.length === 2)
 <style scoped>
 .hand-area { display: flex; flex-direction: column; align-items: center; gap: 12rpx; padding: 16rpx 0; }
 .hand-header { width: 100%; display: flex; justify-content: center; align-items: center; gap: 12rpx; }
+/* 头像包裹层：作为 slot 提示（如"点击屏幕任意处继续"）的绝对定位基准 */
+.avatar-wrap { position: relative; }
 .header-info { display: flex; flex-direction: column; }
 .name { font-size: 24rpx; }
 .counts { font-size: 20rpx; color: #b0a685; }
