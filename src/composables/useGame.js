@@ -23,6 +23,9 @@ export function useGame() {
 
   const view = reactive(viewOf(g, 0))
 
+  /** 掷骰权座位：0=我（真人点击）；1/2/3=AI（自动触发掷骰动画与结果） */
+  const diceRollerSeat = view.rollerSeat ?? 0
+
   function syncView() {
     const v = viewOf(g, 0)
     // myKept/tableHistory 由 core 原地 push（引用不变），浅拷贝新数组保证 Vue 响应式感知更新
@@ -59,16 +62,17 @@ export function useGame() {
     return corePlayableTilesEnds(view.myHand, view.openEnds).map((t) => t.id)
   })
 
-  /** 开局掷骰（点击"掷骰子"按钮触发）。摇 1.2s → 停 2.4s 看点数并揭头牌 → 自动进入出牌阶段 */
+  /** 开局掷骰（真人掷骰时点击按钮触发）。摇 1.2s → 停 2.4s 看点数并揭头牌 → 自动进入出牌阶段 */
   function roll(dice) {
     if (view.state !== 'ROLLING') return
+    if (diceRollerSeat !== 0) return // AI 掷骰局：屏蔽真人点击（UI 已隐藏按钮，双保险）
     fx.diceRolling = true
     const finalDice = dice ?? 1 + Math.floor(Math.random() * 6)
+    // 摇骰 1.2s → 落定 → 停 2.4s 看点数并揭头牌 → 进入出牌阶段（AI 掷骰走 aiRollSame 流程，节奏一致）
     setTimeout(() => {
       if (g.state !== 'ROLLING') return // 双击守卫：第二个定时器触发时首掷已使 state 离开 ROLLING
       fx.dice = finalDice
       fx.diceRolling = false // 触发落定回弹动画，停在最终点数供玩家查看
-      // 停顿节奏：落定 1s 后 UI 揭示头牌文案，2.4s 后自动进入出牌阶段
       setTimeout(() => {
         const res = rollDice(g, finalDice)
         if (res.ok) {
@@ -77,6 +81,27 @@ export function useGame() {
         }
       }, 2400)
     }, 1200)
+  }
+
+  // AI 掷骰：掷骰权在机器人时，开局停 1s 自动掷（复用 roll 的动画节奏：摇 1.2s → 停 2.4s → 进阶段）
+  if (diceRollerSeat !== 0) {
+    setTimeout(() => {
+      if (g.state !== 'ROLLING') return // 守卫：页面已重开等异常情况
+      fx.diceRolling = true
+      const finalDice = 1 + Math.floor(Math.random() * 6)
+      setTimeout(() => {
+        if (g.state !== 'ROLLING') return
+        fx.dice = finalDice
+        fx.diceRolling = false
+        setTimeout(() => {
+          const res = rollDice(g, finalDice)
+          if (res.ok) {
+            syncView()
+            scheduleAiIfNeeded()
+          }
+        }, 2400)
+      }, 1200)
+    }, 1000)
   }
 
   /** 我出牌。side: 'bottom'|'top' 跟牌放置端（仅链已开出时有意义），缺省 bottom */
@@ -161,7 +186,7 @@ export function useGame() {
   }
 
   return {
-    view, fx, myTurn, mustDiscard, playableIds, labelOf,
+    view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat,
     roll, myPlay, myDiscard,
   }
 }

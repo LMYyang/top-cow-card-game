@@ -14,7 +14,9 @@
           <view class="dice" :class="{ rolling: fx.diceRolling, landed: diceLanded }">{{ diceFace }}</view>
           <!-- 落定后先看点数，稍后揭示头牌，再自动进入出牌阶段 -->
           <view v-if="leaderRevealed" class="dice-result">{{ diceResultText }}</view>
-          <button v-else class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
+          <!-- 掷骰权在我时才显示按钮；机器人掷骰时到点自动掷，仅显示状态文案 -->
+          <button v-else-if="diceRollerSeat === 0" class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
+          <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
           <TableTimeline :history="view.tableHistory" />
@@ -84,7 +86,7 @@ import { placeSides } from '../../core/rules.js'
 import { useGame } from '../../composables/useGame.js'
 
 const {
-  view, fx, myTurn, mustDiscard, playableIds, labelOf,
+  view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat,
   roll, myPlay, myDiscard,
 } = useGame()
 
