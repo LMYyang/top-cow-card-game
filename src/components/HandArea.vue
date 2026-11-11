@@ -33,9 +33,6 @@
           @click="$emit('choose-side', opt.side)"
         >{{ opt.side === 'top' ? '上端' : '下端' }}</button>
       </view>
-      <view v-else-if="sideOptions.length === 1" class="side-fixed">
-        <text class="side-label">将接{{ sideOptions[0].side === 'top' ? '上' : '下' }}端</text>
-      </view>
       <button class="btn-primary" :disabled="!selectedId || mustDiscard" @click="$emit('confirm-play')">出牌</button>
       <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('confirm-discard')">扣牌</button>
     </view>
@@ -70,7 +67,10 @@ const selectedTile = computed(() =>
  */
 const sideOptions = computed(() => {
   if (!props.myTurn || !selectedTile.value || !props.openEnds) return []
-  return placeSides(selectedTile.value, props.openEnds)
+  const options = placeSides(selectedTile.value, props.openEnds)
+  // 链两端待接点数相同（如 3|3）：上下端无差异，不显示选择器，出牌固定放下端
+  if (options.length === 2 && props.openEnds.top === props.openEnds.bottom) return []
+  return options
 })
 const bothEnds = computed(() => sideOptions.value.length === 2)
 </script>

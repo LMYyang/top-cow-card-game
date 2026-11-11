@@ -58,7 +58,7 @@ export function useGame() {
     return corePlayableTilesEnds(view.myHand, view.openEnds).map((t) => t.id)
   })
 
-  /** 开局掷骰（点击"掷骰子"按钮触发） */
+  /** 开局掷骰（点击"掷骰子"按钮触发）。摇 1.2s → 停 2.4s 看点数并揭头牌 → 自动进入出牌阶段 */
   function roll(dice) {
     if (view.state !== 'ROLLING') return
     fx.diceRolling = true
@@ -66,12 +66,15 @@ export function useGame() {
     setTimeout(() => {
       if (g.state !== 'ROLLING') return // 双击守卫：第二个定时器触发时首掷已使 state 离开 ROLLING
       fx.dice = finalDice
-      fx.diceRolling = false
-      const res = rollDice(g, finalDice)
-      if (res.ok) {
-        syncView()
-        scheduleAiIfNeeded()
-      }
+      fx.diceRolling = false // 触发落定回弹动画，停在最终点数供玩家查看
+      // 停顿节奏：落定 1s 后 UI 揭示头牌文案，2.4s 后自动进入出牌阶段
+      setTimeout(() => {
+        const res = rollDice(g, finalDice)
+        if (res.ok) {
+          syncView()
+          scheduleAiIfNeeded()
+        }
+      }, 2400)
     }, 1200)
   }
 

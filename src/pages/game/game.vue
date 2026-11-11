@@ -11,8 +11,10 @@
       <!-- 中央 -->
       <CenterArea>
         <template v-if="view.state === 'ROLLING'">
-          <view class="dice" :class="{ rolling: fx.diceRolling }">{{ diceFace }}</view>
-          <button class="btn-primary" :disabled="fx.diceRolling" @click="roll()">掷骰定头牌</button>
+          <view class="dice" :class="{ rolling: fx.diceRolling, landed: diceLanded }">{{ diceFace }}</view>
+          <!-- 落定后先看点数，稍后揭示头牌，再自动进入出牌阶段 -->
+          <view v-if="leaderRevealed" class="dice-result">{{ diceResultText }}</view>
+          <button v-else class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
           <TableTimeline :history="view.tableHistory" />
@@ -68,7 +70,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import OpponentZone from '../../components/OpponentZone.vue'
 import CenterArea from '../../components/CenterArea.vue'
 import HandArea from '../../components/HandArea.vue'
@@ -86,7 +88,52 @@ const selectedId = ref(null)
 const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下端
 
 const DICE_FACES = { 1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅' }
-const diceFace = computed(() => (fx.dice ? DICE_FACES[fx.dice] : '⚀'))
+// 掷骰动画期间骰面快速随机跳动（初始/落定后显示 fx.dice，动画期间随机）
+const randomFace = ref(1)
+const diceFace = computed(() => (fx.dice ? DICE_FACES[fx.dice] : DICE_FACES[randomFace.value]))
+
+// 落定后触发回弹动画；停顿展示点数，随后提示头牌归属，再自动进入出牌阶段
+const diceLanded = ref(false)
+const leaderRevealed = ref(false)
+let diceFaceTimer = null
+let revealTimer = null
+const diceResultText = computed(() => {
+  if (!fx.dice) return ''
+  const OFFSET_NAMES = { 1: '自己', 5: '自己', 2: '下家', 6: '下家', 3: '对家', 4: '上家' }
+  return `掷出 ${fx.dice} 点 · ${OFFSET_NAMES[fx.dice]}是头牌`
+})
+function clearTimers() {
+  if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
+  if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
+}
+watch(
+  () => fx.diceRolling,
+  (rolling) => {
+    if (rolling) {
+      diceLanded.value = false
+      leaderRevealed.value = false
+      // 动画期间每 80ms 随机换一个骰面，模拟翻滚
+      diceFaceTimer = setInterval(() => {
+        randomFace.value = 1 + Math.floor(Math.random() * 6)
+      }, 80)
+    } else {
+      if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
+      if (!fx.dice) return // 非落定（如重置），不进入揭示流程
+      // 落定：先复位 class 以便重复触发回弹动画
+      diceLanded.value = false
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          diceLanded.value = true
+        })
+      })
+      // 停顿 1s 看点数 → 揭示头牌 → 再停 1.2s 自动进阶段（与 useGame 的 1.6s 落定→进阶段节奏衔接）
+      revealTimer = setTimeout(() => {
+        leaderRevealed.value = true
+      }, 1000)
+    }
+  }
+)
+onUnmounted(clearTimers)
 
 const turnText = computed(() => {
   if (view.state !== 'PLAYING') return ''
@@ -113,6 +160,8 @@ const discardEntries = computed(() => view.tableHistory.filter((e) => e.discarde
 /** 选中的牌：两端都可接时返回 null（需用户选端），否则返回唯一可接端；首出/不可接也返回 null */
 const selectedForcedSide = computed(() => {
   if (!selectedId.value || view.openEnds === null) return null
+  // 链两端点数相同（如 3|3）：上下端无差异，直接放下端，不弹选择器
+  if (view.openEnds.top === view.openEnds.bottom) return 'bottom'
   const t = view.myHand.find((x) => x.id === selectedId.value)
   if (!t) return null
   const options = placeSides(t, view.openEnds)
@@ -167,14 +216,37 @@ function goHome() {
   box-sizing: border-box;
 }
 .middle-row { flex: 1; display: flex; min-height: 0; }
-.dice { font-size: 96rpx; line-height: 1; margin-bottom: 24rpx; }
-.dice.rolling { animation: shake 0.3s infinite; }
-@keyframes shake {
-  0%, 100% { transform: rotate(0); }
-  25% { transform: rotate(-15deg) translateY(-8rpx); }
-  75% { transform: rotate(15deg) translateY(8rpx); }
+.dice { font-size: 96rpx; line-height: 1; margin-bottom: 24rpx; color: #c9a227; }
+/* 掷骰中：快速翻转跳动 */
+.dice.rolling { animation: tumble 0.35s infinite; }
+@keyframes tumble {
+  0%   { transform: rotate(0) translate(0, 0) scale(1); }
+  25%  { transform: rotate(-40deg) translate(-18rpx, -16rpx) scale(1.12); }
+  50%  { transform: rotate(25deg) translate(14rpx, -30rpx) scale(0.9); }
+  75%  { transform: rotate(55deg) translate(20rpx, 10rpx) scale(1.1); }
+  100% { transform: rotate(0) translate(0, 0) scale(1); }
 }
-.table-empty, .turn-hint, .settle-brief { color: #b0a685; font-size: 26rpx; margin: 8rpx 0; }
+/* 落定：从高处落下 + 回弹 */
+.dice.landed { animation: drop-bounce 0.5s ease-out; }
+@keyframes drop-bounce {
+  0%   { transform: translateY(-64rpx) scale(1.25); opacity: 0.4; }
+  55%  { transform: translateY(0) scale(0.92); opacity: 1; }
+  75%  { transform: translateY(-14rpx) scale(1.06); }
+  100% { transform: translateY(0) scale(1); }
+}
+/* 头牌揭示文案 */
+.dice-result {
+  color: #c9a227;
+  font-size: 32rpx;
+  font-weight: bold;
+  margin-bottom: 24rpx;
+  animation: fade-in 0.4s ease-out;
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(12rpx); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.table-empty, .turn-hint, .settle-brief { color: #b0a685; font-size: 26rpx; margin: 20rpx 0; }
 
 .settle-overlay {
   position: fixed; inset: 0;

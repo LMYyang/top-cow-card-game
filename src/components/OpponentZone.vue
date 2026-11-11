@@ -6,12 +6,12 @@
         <text class="name">{{ label }}{{ isLeader ? ' 👑' : '' }}</text>
         <text class="counts">牌 {{ handCount }} · 扣 {{ keptCount }}</text>
       </view>
+      <view v-if="lastMove" class="bubble">
+        {{ lastMove.discarded ? '扣牌' : '出牌' }}
+      </view>
     </view>
     <view v-if="keptTiles.length" class="kept-row">
       <PlayingTile v-for="t in keptTiles" :key="t.id" :tile="null" size="xs" face-down />
-    </view>
-    <view v-if="lastMove" class="bubble">
-      {{ lastMove.discarded ? '扣牌' : '出牌' }}
     </view>
   </view>
 </template>
@@ -43,7 +43,7 @@ const keptTiles = computed(() =>
 .zone.left, .zone.right { flex-direction: column; justify-content: center; }
 .zone.top { justify-content: center; } /* 对家内容在顶部区域水平居中 */
 /* 头像与文字始终同行（头像+名字/牌数一组），左右家纵向排列时也保持水平居中 */
-.profile { display: flex; align-items: center; gap: 10rpx; }
+.profile { display: flex; align-items: center; gap: 10rpx; position: relative; }
 .info { display: flex; flex-direction: column; }
 .name { font-size: 24rpx; }
 .counts { font-size: 20rpx; color: #b0a685; }
@@ -51,10 +51,14 @@ const keptTiles = computed(() =>
 .kept-row { display: flex; gap: 4rpx; align-items: center; }
 .zone.left .kept-row { order: 3; }
 .bubble {
-  position: absolute; top: -36rpx; right: -8rpx;
+  position: absolute;
   background: #c9a227; color: #fff; font-size: 20rpx;
   padding: 4rpx 12rpx; border-radius: 12rpx;
 }
-.zone.top .bubble { top: -36rpx; }
-.zone.left .bubble, .zone.right .bubble { top: -36rpx; right: auto; left: 50%; transform: translateX(-50%); }
+/* 对家：气泡在头像正下方，相对头像区水平居中、紧贴底边 */
+.zone.top .bubble { top: 100%; left: 50%; transform: translateX(-50%); margin-top: -6rpx; }
+/* 上下家（左右家）：扣牌牌背在下方会挡住气泡，改为头像正上方 */
+.zone.left .bubble, .zone.right .bubble {
+  bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: -6rpx;
+}
 </style>
