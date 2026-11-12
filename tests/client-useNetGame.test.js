@@ -149,4 +149,33 @@ describe('useNetGame', () => {
     expect(res.ok).toBe(false)
     expect(res.reason).toBe('请求超时')
   })
+
+  it('fake net 退订契约：off() 后不再收到推送（与 net.js Set 语义一致）', () => {
+    const net = fakeNet()
+    const seen = []
+    const off = net.on('game.state', (p) => seen.push(p))
+    net.__push('game.state', { v: 1 })
+    expect(seen).toHaveLength(1)
+    off() // 退订后处理器被真正移除
+    net.__push('game.state', { v: 2 })
+    expect(seen).toHaveLength(1)
+    // 重复退订安全（Set.delete 幂等）
+    expect(() => off()).not.toThrow()
+  })
+
+  it('两个 useNetGame 实例各自独立接收推送，互不串扰', () => {
+    const net = fakeNet()
+    const a = useNetGame(net)
+    const b = useNetGame(net)
+    expect(a.view.state).toBe('')
+    expect(b.view.state).toBe('')
+    net.__push('game.state', {
+      view: { state: 'PLAYING', currentSeat: 0, openEnds: null, myHand: [], myKept: [], opponents: [], tableHistory: [], tableTile: null, leaderSeat: 0, rollerSeat: 0, result: null },
+      fx: {}, yourSeat: 0, names: {},
+    })
+    // 同一 net 上的两个订阅都会收到推送，且各自维护独立 view
+    expect(a.view.state).toBe('PLAYING')
+    expect(b.view.state).toBe('PLAYING')
+    // 单测在组件外调用（无 getCurrentInstance）：订阅保持注册，推送仍生效（预期行为，不告警不崩溃）
+  })
 })

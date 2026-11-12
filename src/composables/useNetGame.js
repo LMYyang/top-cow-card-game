@@ -1,5 +1,5 @@
 // src/composables/useNetGame.js
-import { reactive, computed, ref } from 'vue'
+import { reactive, computed, ref, getCurrentInstance, onUnmounted } from 'vue'
 import { sharedNet } from '../utils/net.js'
 import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
 
@@ -31,6 +31,9 @@ export function useNetGame(net = sharedNet()) {
     view.result = result
     Object.assign(fx, { dice: null, diceRolling: false }, f)
   })
+  // sharedNet() 是跨页面存活的模块单例：组件卸载时须退订，否则 game.vue 每次挂载都累积两个处理器
+  // （仅组件上下文注册生命周期钩子；单测在组件外直接调用时不注册，避免警告）
+  if (getCurrentInstance()) onUnmounted(() => { offState(); offOver() })
 
   /** UI 视角座位名：自己=「我」，其余显示成员昵称 */
   const labelOf = (seat) => (seat === mySeat.value ? '我' : names[seat] || `座位${seat}`)
