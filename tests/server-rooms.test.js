@@ -19,6 +19,11 @@ function conn(name) {
   }
 }
 
+/** 推进假时钟直到对局进入 SETTLE（托管对局全程可能需要数千次 AI 步进） */
+function advanceUntilSettle(room) {
+  for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+}
+
 describe('RoomManager 房间流程', () => {
   it('创建房间：房主落座 0，房间号 6 位', () => {
     const c = conn('甲')
@@ -142,7 +147,7 @@ describe('RoomManager 房间流程', () => {
     expect(m0).not.toHaveProperty('conn')
     expect(m0).not.toHaveProperty('graceTimer')
     expect(m0).not.toHaveProperty('aiTimer')
-    expect(m0).toMatchObject({ seat: 0, name: '甲', isHost: true })
+    expect(m0).toMatchObject({ seat: 0, name: '甲', isHost: true, gone: false })
   })
 
   it('setReady 对局中被拒（ROOM_STARTED）', () => {
@@ -220,8 +225,7 @@ describe('开始对局与动作路由', () => {
     expect(res.error).toMatchObject({ code: 'UNKNOWN_ACTION' })
   })
 
-  it('掷骰由服务端编排：立即 rolling，1.2s 定骰，2.4s 后进 PLAYING', () => {
-    vi.useFakeTimers()
+  it('掷骰由服务端编排：立即 rolling，1.2s 定骰，2.4s 后进 PLAYING', () => {    vi.useFakeTimers()
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
     const rollerSeat = room.game.rollerSeat
@@ -273,9 +277,27 @@ describe('开始对局与动作路由', () => {
     mgr.startGame(tokens[0], room.roomId)
     vi.useFakeTimers()
     for (const m of room.members) mgr.onDisconnect(m.token)
-    for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+    advanceUntilSettle(room)
     expect(room.game.state).toBe('SETTLE')
     expect(room.game.result).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('掷骰权座位掉线：托管自动掷骰且重连后不重复掷', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    const rollerSeat = room.game.rollerSeat
+    const rollerToken = tokens[rollerSeat]
+    // 掷骰权座位掉线 → 托管自动掷
+    mgr.onDisconnect(rollerToken)
+    vi.advanceTimersByTime(1000 + 3600)
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    expect(room.game.players.every(p => p.hand.length === 6)).toBe(true)
+    // 重连后不会再次触发掷骰时间线（手牌数保持 6，不重发）
+    mgr.reconnect(conn('重连者'), rollerToken)
+    vi.advanceTimersByTime(5000)
+    expect(room.game.players.every(p => p.hand.length === 6)).toBe(true)
     vi.useRealTimers()
   })
 })
@@ -312,7 +334,7 @@ describe('断线重连与结算', () => {
     vi.useRealTimers()
   })
 
-  it('WAITING 阶段房主离开：房间销毁（测试房为唯一成员时的场景已由 removeMember 覆盖，此处测多人房主转移）', () => {
+  it('WAITING 阶段房主离开：成员移除并转移房主', () => {
     const { room, tokens } = fullRoom()
     // 甲（房主）主动离开 → WAITING 阶段成员移除、房主转移
     const res = mgr.leave(tokens[0])
@@ -327,7 +349,7 @@ describe('断线重连与结算', () => {
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
     for (const m of room.members) mgr.onDisconnect(m.token)
-    for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+    advanceUntilSettle(room)
     expect(room.game.state).toBe('SETTLE')
     const winner = room.game.result.winner
     mgr.gameAction(tokens[0], 'game.settleContinue', {})
@@ -344,7 +366,7 @@ describe('断线重连与结算', () => {
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
     for (const m of room.members) mgr.onDisconnect(m.token)
-    for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+    advanceUntilSettle(room)
     mgr.gameAction(tokens[0], 'game.settleContinue', {})
     vi.advanceTimersByTime(5000)
     expect(room.game.state).toBe('ROLLING')

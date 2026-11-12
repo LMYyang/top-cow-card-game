@@ -2,7 +2,7 @@
  * 房间与成员管理（服务器权威）。
  * Room: { roomId, members, game, fx, settleAck, diceInFlight, pendingDice, timers, createdAt }
  * 阶段不在 room 上冗余存储：对局中即 room.game.state，未开局为 'WAITING'，统一由 roomStateOf(room) 派生。
- * 成员: { seat, token, name, connected, ready, isHost, isAI, conn, graceTimer, aiTimer }
+ * 成员: { seat, token, name, connected, gone, ready, isHost, isAI, conn, graceTimer, aiTimer }
  * token 是玩家身份凭证（重连用）；conn 是当前 WebSocket 连接（可变）。
  */
 
@@ -35,7 +35,7 @@ export class RoomManager {
       roomId: room.roomId,
       state: this.roomStateOf(room),
       members: room.members.map((m) => ({
-        seat: m.seat, name: m.name, connected: m.connected,
+        seat: m.seat, name: m.name, connected: m.connected, gone: m.gone,
         ready: m.ready, isHost: m.isHost, isAI: m.isAI,
       })),
     }
@@ -68,7 +68,7 @@ export class RoomManager {
     return null
   }
 
-  /** 从 WAITING 房间移除成员：销毁空房 / 转移房主并广播（不发 kicked，Task 3 的 leave 才发） */
+  /** 从 WAITING 房间移除成员：销毁空房 / 转移房主并广播（不发 kicked：主动离开方无需通知，断线方 conn 已置空无法送达） */
   removeMember(room, member) {
     room.members = room.members.filter((m) => m !== member)
     this.tokens.delete(member.token)
@@ -125,7 +125,7 @@ export class RoomManager {
     const seat = this.firstVacantSeat(room)
     if (seat === -1) return { error: { code: 'ROOM_FULL', message: '房间已满' } }
     const token = makeToken()
-    const member = { seat, token, name, connected: true, ready: false, isHost: room.members.length === 0, isAI: false, conn, graceTimer: null, aiTimer: null }
+    const member = { seat, token, name, connected: true, gone: false, ready: false, isHost: room.members.length === 0, isAI: false, conn, graceTimer: null, aiTimer: null }
     room.members.push(member)
     this.tokens.set(token, room)
     this.pushRoomState(room) // 新成员也会收到（其 conn 已在 members 中）
@@ -263,7 +263,7 @@ export class RoomManager {
       this.afterAction(room)
       return { ok: true }
     }
-    if (type === 'game.settleContinue') return this.settleContinue(token)
+    if (type === 'game.settleContinue') return this.settleContinue(room, me)
     return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } }
   }
 
@@ -404,7 +404,7 @@ export class RoomManager {
   }
 
   /** 重连收回托管 */
-  disableAiControl(room, member) {
+  disableAiControl(member) {
     member.aiTimer = null
   }
 
@@ -418,7 +418,7 @@ export class RoomManager {
     me.conn = conn
     me.connected = true
     if (me.graceTimer) { clearTimeout(me.graceTimer); me.graceTimer = null }
-    this.disableAiControl(room, me)
+    this.disableAiControl(me)
     conn.send({ type: 'room.state', payload: { room: this.roomState(room) } })
     let gameState = null
     if (room.game) {
@@ -446,29 +446,27 @@ export class RoomManager {
     return { ok: true }
   }
 
-  /** 定时清理：WAITING 且全员断线的僵尸房 */
+  /** 定时清理：WAITING 且无人在线的僵尸房；对局中全员掉线（无人点继续）的死房 */
   sweep() {
     for (const room of [...this.rooms.values()]) {
       const alive = room.members.some((m) => m.connected && !m.gone)
-      if (this.roomStateOf(room) === 'WAITING' && !alive) this.destroyRoom(room.roomId)
+      const allGone = room.members.length > 0 && room.members.every((m) => m.gone)
+      if ((this.roomStateOf(room) === 'WAITING' && !alive) || allGone) this.destroyRoom(room.roomId)
     }
   }
 
   // ---------- 结算继续 ----------
 
   /** 结算后点继续：全员确认（或 5s 超时）开下一局，掷骰者=上局赢家 */
-  settleContinue(token) {
-    const room = this.roomOf(token)
-    if (!room || !room.game || room.game.state !== 'SETTLE') return { error: { code: 'BAD_STATE', message: '非结算阶段' } }
-    const me = this.memberByToken(room, token)
-    if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
+  settleContinue(room, me) {
+    if (!room.game || room.game.state !== 'SETTLE') return { error: { code: 'BAD_STATE', message: '非结算阶段' } }
     room.settleAck.add(me.seat)
     const active = room.members.filter((m) => !m.gone).length
     if (room.settleAck.size >= active) {
       this.startNextRound(room)
     } else if (!room.settleTimer) {
       room.settleTimer = setTimeout(() => this.startNextRound(room), 5000)
-      if (room.timers) room.timers.add(room.settleTimer)
+      room.timers.add(room.settleTimer)
     }
     return { ok: true }
   }
