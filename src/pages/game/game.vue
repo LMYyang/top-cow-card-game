@@ -79,7 +79,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, isRef } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import OpponentZone from '../../components/OpponentZone.vue'
 import CenterArea from '../../components/CenterArea.vue'
@@ -93,8 +93,8 @@ import { useNetGame } from '../../composables/useNetGame.js'
 /**
  * 双模式接入：solo（单机 AI）与 net（联网对战）。
  * 模式由 onLoad 的 query.mode 决定，此时才实例化对应 composable（useNetGame 订阅推送）。
- * gameApi 就绪前模板已在渲染，全部绑定走 computed 代理 + 空对象兜底；gameApi 为 ref，
- * 故 script 内访问一律带 .value（模板自动解包不受影响）。
+ * 全部绑定走 computed 代理 + 空对象兜底（gameApi 就绪前模板已在渲染）；
+ * solo 的 view/fx 为 reactive 对象、net 的 myTurn 等为 computed，isRef 区分后统一解包。
  */
 const isNet = ref(false)
 const gameApi = ref(null)
@@ -109,16 +109,17 @@ function emptyView() {
 function emptyFx() {
   return { dice: null, diceRolling: false, settleShow: false, revealKept: false, lastMove: null }
 }
-const view = computed(() => gameApi.value?.view ?? emptyView())
-const fx = computed(() => gameApi.value?.fx ?? emptyFx())
-const myTurn = computed(() => gameApi.value?.myTurn.value ?? false)
-const mustDiscard = computed(() => gameApi.value?.mustDiscard.value ?? false)
-const playableIds = computed(() => gameApi.value?.playableIds.value ?? [])
+const unwrap = (v, fallback) => (isRef(v) ? v.value : v) ?? fallback
+const view = computed(() => unwrap(gameApi.value?.view, emptyView()))
+const fx = computed(() => unwrap(gameApi.value?.fx, emptyFx()))
+const myTurn = computed(() => unwrap(gameApi.value?.myTurn, false))
+const mustDiscard = computed(() => unwrap(gameApi.value?.mustDiscard, false))
+const playableIds = computed(() => unwrap(gameApi.value?.playableIds, []))
 // 掷骰权座位：net 下以服务器 view.rollerSeat 为准（useNetGame 已聚合）；solo 恒为 0
-const diceRollerSeat = computed(() => gameApi.value?.diceRollerSeat.value ?? 0)
-const mySeatVal = computed(() => gameApi.value?.mySeat?.value ?? 0)
+const diceRollerSeat = computed(() => unwrap(gameApi.value?.diceRollerSeat, 0))
+const mySeatVal = computed(() => unwrap(gameApi.value?.mySeat, 0))
 // 连接状态（net）：非 open 时顶部显示断线重连条；solo 无此概念，恒 open
-const connection = computed(() => gameApi.value?.connection?.value ?? 'open')
+const connection = computed(() => unwrap(gameApi.value?.connection, 'open'))
 
 const selectedId = ref(null)
 const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下端
