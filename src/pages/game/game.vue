@@ -272,12 +272,18 @@ function onConfirmDiscard() {
 const fly = reactive({ tile: null, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
 let flyTimer = null
 
-/** 屏幕坐标（px）：DOM 元素中心；查不到返回 null（不播动画，静默降级） */
+/** 屏幕坐标（px）：元素或其内部第一个有尺寸的后代的中心。
+ *  锚点层 display:contents 自身 getBoundingClientRect 全 0，须穿透到内部真实渲染元素 */
 function centerOfEl(el) {
-  if (!el || typeof el.getBoundingClientRect !== 'function') return null
-  const r = el.getBoundingClientRect()
-  if (r.width === 0 && r.height === 0) return null
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  let node = el
+  for (let depth = 0; node && depth < 5; depth++) {
+    if (typeof node.getBoundingClientRect !== 'function') return null
+    const r = node.getBoundingClientRect()
+    if (r.width > 0 || r.height > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    // display:contents 元素：取第一个元素后代继续找
+    node = node.firstElementChild
+  }
+  return null
 }
 
 function elById(id) {
