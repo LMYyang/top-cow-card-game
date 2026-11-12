@@ -303,6 +303,11 @@ function anchorElOf(seat) {
   return elById({ 1: 'opp-right-anchor', 2: 'opp-top-anchor', 3: 'opp-left-anchor' }[seat])
 }
 
+/** 读取链上新条目真牌的最终渲染朝向：真牌根节点带 mirrored class（取反与否取决于所在列方向） */
+function readRealMirrored() {
+  return elById('latest-entry-anchor')?.querySelector('.tile')?.classList.contains('mirrored') ?? null
+}
+
 /** 桌面中央（时间线容器）中心：飞牌兜底终点 */
 function tableCenter() {
   return centerOfEl(elById('timeline-anchor'))
@@ -320,8 +325,10 @@ function flyFromEntry(entry) {
   return {
     tile,
     from,
-    // 竖牌飞行前即确定上下朝向：条目的 mirrored 是该次放置的渲染朝向，
-    // 飞行克隆照此渲染，落地时与真牌朝向一致（红八双出只有末张入链，取最后一张同源）
+    // 初始朝向取放置镜像（entry.mirrored），但链条拐进向上列后 core 的放置镜像语义被
+    // TableTimeline 取反（renderMirrored = !mirrored），此值可能与最终落地朝向不符。
+    // 双 rAF 渲染完成后 playFly 会回读真牌 DOM 上的 mirrored class 校正（readRealMirrored），
+    // 保证飞行朝向与落地后的真牌渲染朝向一致（红八双出只有末张入链，取最后一张同源）
     mirrored: !!entry.mirrored,
     resolveTo() {
       // 链上实际落点：TableTimeline 给最新条目挂了 #latest-entry-anchor
@@ -354,6 +361,10 @@ function playFly(entry) {
   // 此时才解析终点并切到过渡态（watch 触发瞬间锚点还是旧牌，立即取会差一位）
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      // 链条拐进向上列后真牌朝向与放置镜像相反，回读真牌 DOM 的 mirrored class 校正飞行朝向，
+      // 使飞牌上下方向与落地后的真牌渲染朝向一致（读不到时沿用放置镜像）
+      const real = readRealMirrored()
+      if (real !== null) fly.mirrored = real
       const to = f.resolveTo()
       if (to) {
         fly.fromX = to.x
