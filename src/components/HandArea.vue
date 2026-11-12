@@ -12,14 +12,19 @@
     </view>
     <view v-if="mustDiscard" class="hint warn">无牌可接，请选一张扣下</view>
     <view class="hand">
-      <PlayingTile
-        v-for="t in hand"
-        :key="t.id"
-        :tile="t"
-        :selected="t.id === selectedId"
-        :dimmed="myTurn && playableIds.length > 0 && !playableIds.includes(t.id)"
-        @click="$emit('select', t.id)"
-      />
+      <view v-for="t in hand" :key="t.id" class="tile-wrap">
+        <!-- 双端都可接时：两个小端按钮悬浮在选中牌的正上方，点任一端直接出牌 -->
+        <view v-if="bothEnds && t.id === selectedId" class="side-float">
+          <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'top' })">上端</button>
+          <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'bottom' })">下端</button>
+        </view>
+        <PlayingTile
+          :tile="t"
+          :selected="t.id === selectedId"
+          :dimmed="myTurn && playableIds.length > 0 && !playableIds.includes(t.id)"
+          @click="onTileTap(t.id)"
+        />
+      </view>
       <!-- 扣牌与手牌同一行（不单独占行）：不挤压下方出牌/扣牌按钮空间 -->
       <template v-if="kept.length">
         <text class="kept-label">扣牌：</text>
@@ -33,18 +38,10 @@
       </template>
     </view>
     <view class="actions" v-if="myTurn">
-      <view v-if="bothEnds" class="side-picker">
-        <text class="side-label">放置端：</text>
-        <button
-          v-for="opt in sideOptions"
-          :key="opt.side"
-          class="btn-side"
-          :class="{ active: side === opt.side }"
-          @click="$emit('choose-side', opt.side)"
-        >{{ opt.side === 'top' ? '上端' : '下端' }}</button>
+      <view class="btn-row">
+        <button class="btn-primary" :disabled="!selectedId || mustDiscard" @click="$emit('confirm-play')">出牌</button>
+        <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('confirm-discard')">扣牌</button>
       </view>
-      <button class="btn-primary" :disabled="!selectedId || mustDiscard" @click="$emit('confirm-play')">出牌</button>
-      <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('confirm-discard')">扣牌</button>
     </view>
   </view>
 </template>
@@ -66,7 +63,21 @@ const props = defineProps({
   openEnds: { type: Object, default: null }, // 链两端待接点 { top, bottom }，首出前 null
   revealKept: { type: Boolean, default: false }, // 局末亮牌：翻开我扣的牌面
 })
-defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side'])
+const emit = defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick'])
+
+/** 双击快速出牌：仅当该牌无需选端（唯一可接端 / 链两端同点 / 首出）时生效，需选端时仍走"选中→选端→出牌"流程 */
+let lastTapId = null
+let lastTapTime = 0
+function onTileTap(id) {
+  const now = Date.now()
+  const isDoubleTap = lastTapId === id && now - lastTapTime < 350
+  lastTapId = id
+  lastTapTime = now
+  emit('select', id)
+  if (isDoubleTap && props.myTurn && !props.mustDiscard && !bothEnds.value) {
+    emit('confirm-play')
+  }
+}
 
 const selectedTile = computed(() =>
   props.selectedId ? (props.hand || []).find((x) => x.id === props.selectedId) || null : null
@@ -97,12 +108,23 @@ const bothEnds = computed(() => sideOptions.value.length === 2)
 .hint.warn { color: #e0a030; font-size: 24rpx; }
 .hand { display: flex; gap: 10rpx; justify-content: center; align-items: center; flex-wrap: wrap; }
 .kept-label { font-size: 22rpx; color: #b0a685; }
-.actions { display: flex; gap: 20rpx; align-items: center; flex-wrap: wrap; justify-content: center; }
-.side-picker { display: flex; align-items: center; gap: 8rpx; }
-.side-fixed { display: flex; align-items: center; }
-.side-label { font-size: 22rpx; color: #b0a685; }
+.actions { display: flex; gap: 20rpx; align-items: center; justify-content: center; flex-wrap: nowrap; white-space: nowrap; }
+/* 出牌/扣牌按钮行：uni-app button 默认 display:block 会竖着堆叠，必须显式开 flex 才能并排同一行 */
+.btn-row { display: flex; gap: 20rpx; align-items: center; justify-content: center; flex-wrap: nowrap; }
+/* 出牌/扣牌按钮收窄内边距，保证窄屏（手机竖屏）下两个按钮也稳在同一行不换行 */
+.actions .btn-primary, .actions .btn-secondary { padding: 18rpx 48rpx; }
+/* 每张手牌的包裹层：作为悬浮端按钮（side-float）的绝对定位基准 */
+.tile-wrap { position: relative; }
+/* 悬浮在选中牌正上方的两个小端按钮：再向上偏移一些（约一张牌高的 2/3），完全不遮牌面 */
+.side-float {
+  position: absolute;
+  left: 50%; top: -70rpx;
+  transform: translateX(-50%);
+  display: flex; gap: 8rpx;
+  z-index: 2;
+}
 .btn-side {
-  font-size: 22rpx; padding: 6rpx 20rpx; margin: 0;
+  font-size: 20rpx; padding: 6rpx 14rpx; margin: 0; line-height: 1.2;
   background: #3a2c14; color: #b0a685; border-radius: 10rpx; border: 2rpx solid #5a4a32;
 }
 .btn-side.active { background: #c9a227; color: #fff; border-color: #c9a227; }

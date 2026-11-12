@@ -66,9 +66,9 @@ const keptTiles = computed(() =>
 .zone.left .profile, .zone.right .profile { flex-direction: column; gap: 4rpx; }
 .name { font-size: 24rpx; }
 .counts { font-size: 20rpx; color: #b0a685; }
-/* 扣牌与"我"的扣牌同为 sm（64×96rpx）；左右家每行最多 3 张（3×64+2×4=200，280 会排下 4 张），其余换行 */
+/* 扣牌与"我"的扣牌同为 sm（64×96rpx）；左右家每行最多 2 张（2×64+4=132），其余换行 */
 .kept-row { display: flex; gap: 4rpx; align-items: center; flex-wrap: wrap; justify-content: center; max-width: 280rpx; }
-.zone.left .kept-row, .zone.right .kept-row { max-width: 200rpx; }
+.zone.left .kept-row, .zone.right .kept-row { max-width: 132rpx; }
 .zone.left .kept-row { order: 3; }
 .bubble {
   position: absolute;

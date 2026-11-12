@@ -47,6 +47,7 @@
       :reveal-kept="fx.revealKept"
       @select="selectedId = $event"
       @choose-side="mySide = $event"
+      @side-pick="onSidePick"
       @confirm-play="onConfirmPlay"
       @confirm-discard="onConfirmDiscard"
     >
@@ -61,7 +62,7 @@
         <view v-for="r in view.result.ranks" :key="r.seat" class="settle-row" :class="{ winner: r.seat === view.result.winner }">
           <view class="settle-player">
             <PlayerAvatar :seat="r.seat" size="sm" />
-            <text>{{ labelOf(r.seat) }}</text>
+            <text>{{ labelOf(r.seat) }}{{ r.seat === view.result.winner ? ' 🏆' : '' }}</text>
           </view>
           <text>扣 {{ r.points }} 点 · {{ r.role }}</text>
           <text class="score">{{ view.result.scores[r.seat] > 0 ? '+' : '' }}{{ view.result.scores[r.seat] }}</text>
@@ -159,6 +160,7 @@ const turnText = computed(() => {
 function opponentBySeat(seat) {
   return view.opponents.find((o) => o.seat === seat) || { handCount: 0, keptCount: 0 }
 }
+/** 各家气泡显示"历史最后一条"行动（出牌/扣牌）：只标最新动作的归属者，别人出牌后即消失 */
 function lastMoveOf(seat) {
   const history = view.tableHistory
   if (!history || history.length === 0) return null
@@ -189,6 +191,18 @@ function onConfirmPlay() {
   if (res.ok) {
     selectedId.value = null
     mySide.value = 'bottom' // 出完复位为默认下端
+  } else {
+    uni.showToast({ title: res.reason || '出牌失败', icon: 'none' })
+  }
+}
+
+/** 两端都可接时：点悬浮的"上端/下端"按钮即选定端并直接出牌（省去再点出牌按钮） */
+function onSidePick({ id, side }) {
+  if (!id || selectedId.value !== id) return
+  const res = myPlay(id, side)
+  if (res.ok) {
+    selectedId.value = null
+    mySide.value = 'bottom'
   } else {
     uni.showToast({ title: res.reason || '出牌失败', icon: 'none' })
   }
@@ -274,7 +288,8 @@ function goHome() {
 
 .settle-overlay {
   position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.72);
+  /* 半透明遮罩：结算时仍能透出后面各家亮出的扣牌 */
+  background: rgba(0, 0, 0, 0.4);
   display: flex; align-items: center; justify-content: center;
   z-index: 99;
 }
@@ -291,11 +306,12 @@ function goHome() {
   50% { opacity: 1; }
 }
 .settle-card {
-  background: #4a3418;
+  background: rgba(74, 52, 24, 0.88);
   border-radius: 24rpx;
   padding: 48rpx 40rpx;
   width: 620rpx;
   display: flex; flex-direction: column; gap: 20rpx;
+  box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.5);
 }
 .settle-title { font-size: 40rpx; font-weight: bold; text-align: center; color: #c9a227; }
 .settle-row {
