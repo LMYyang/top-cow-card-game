@@ -230,10 +230,11 @@ function dotColor(seat) {
   height: 16rpx;
   border-radius: 50%;
 }
-/* 链端小图标：标出上端/下端开口位置。完全悬在牌面外侧、水平居中，不遮挡牌面点数 */
+/* 链端小图标：标出上端/下端开口位置。完全悬在牌面外侧，与牌面（非圆点+牌整体）水平居中：
+   圆点 16rpx + 间隙 6rpx = 22rpx，整体居中会使徽章偏左 11rpx，这里右偏 22rpx 抵消 */
 .end-badge {
   position: absolute;
-  left: 50%;
+  left: calc(50% + 11rpx);
   transform: translateX(-50%);
   bottom: -30rpx;
   background: #c9a227;

@@ -67,9 +67,10 @@
       </HandArea>
     </view>
 
-    <!-- 飞牌动画层：出牌/扣牌后牌从出牌方飞向桌面链端（fixed 覆盖层，不参与布局） -->
+    <!-- 飞牌动画层：出牌后牌从出牌方飞向桌面链端（fixed 覆盖层，不参与布局）。
+         竖牌按该次放置的 mirrored 渲染（飞行时上下朝向即最终落地朝向），横牌无上下语义不镜像 -->
     <view v-if="fly.tile" class="fly-layer" :style="flyStyle">
-      <PlayingTile :tile="fly.tile" size="sm" :horizontal="fly.tile.type === '横牌'" />
+      <PlayingTile :tile="fly.tile" size="sm" :horizontal="fly.tile.type === '横牌'" :mirrored="fly.mirrored" />
     </view>
 
     <!-- 结算覆盖层 -->
@@ -272,7 +273,7 @@ function onConfirmDiscard() {
 // 同时出现"的穿帮。扣牌不飞（会暴露扣的牌面），扣牌条目直接显示。
 // 定位用 id + getElementById：uni-app H5 下 <script setup> 组件默认关闭实例，
 // 父组件 ref 拿不到 $el（此前动画静默失效的根因），原生 DOM 查询最可靠。
-const fly = reactive({ tile: null, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
+const fly = reactive({ tile: null, mirrored: false, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
 // 飞行中隐藏链上真牌（传给 TableTimeline 控制最新条目可见性）
 const latestHidden = ref(false)
 let flyTimer = null
@@ -318,6 +319,9 @@ function flyFromEntry(entry) {
   return {
     tile,
     from,
+    // 竖牌飞行前即确定上下朝向：条目的 mirrored 是该次放置的渲染朝向，
+    // 飞行克隆照此渲染，落地时与真牌朝向一致（红八双出只有末张入链，取最后一张同源）
+    mirrored: !!entry.mirrored,
     resolveTo() {
       // 链上实际落点：TableTimeline 给最新条目挂了 #latest-entry-anchor
       return centerOfEl(elById('latest-entry-anchor')) || tableCenter()
@@ -340,6 +344,7 @@ function playFly(entry) {
   if (!f) return
   clearTimeout(flyTimer)
   fly.tile = f.tile
+  fly.mirrored = f.mirrored
   fly.fromX = f.from.x
   fly.fromY = f.from.y
   fly.moving = false
