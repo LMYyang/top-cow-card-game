@@ -1,6 +1,7 @@
 /**
  * 房间与成员管理（服务器权威）。
- * Room: { roomId, members, state: 'WAITING'|'ROLLING'|'PLAYING'|'SETTLE', game, createdAt }
+ * Room: { roomId, members, game, fx, settleAck, diceInFlight, pendingDice, timers, createdAt }
+ * 阶段不在 room 上冗余存储：对局中即 room.game.state，未开局为 'WAITING'，统一由 roomStateOf(room) 派生。
  * 成员: { seat, token, name, connected, ready, isHost, isAI, conn, graceTimer, aiTimer }
  * token 是玩家身份凭证（重连用）；conn 是当前 WebSocket 连接（可变）。
  */
@@ -23,11 +24,16 @@ export class RoomManager {
     this.now = () => Date.now()
   }
 
+  /** 派生房间阶段：对局中取 core 的 game.state，未开局为 WAITING（单一事实来源，避免双份状态漂移） */
+  roomStateOf(room) {
+    return room.game ? room.game.state : 'WAITING'
+  }
+
   /** 房间快照（下发给客户端的 members 形态，剥离连接与定时器等内部字段） */
   roomState(room) {
     return {
       roomId: room.roomId,
-      state: room.state,
+      state: this.roomStateOf(room),
       members: room.members.map((m) => ({
         seat: m.seat, name: m.name, connected: m.connected,
         ready: m.ready, isHost: m.isHost, isAI: m.isAI,
@@ -80,7 +86,7 @@ export class RoomManager {
     if (next) next.isHost = true
   }
 
-  /** 销毁房间：清空 token 索引与成员连接引用（Task 3 会扩展定时器清理） */
+  /** 销毁房间：清空 token 索引、成员连接引用与未决的对局编排定时器 */
   destroyRoom(roomId) {
     const room = this.rooms.get(roomId)
     if (!room) return
@@ -89,6 +95,8 @@ export class RoomManager {
       if (m.graceTimer) clearTimeout(m.graceTimer)
       m.conn = null
     }
+    for (const t of room.timers || []) clearTimeout(t)
+    if (room.settleTimer) clearTimeout(room.settleTimer) // Task 3 的结算推进定时器（防御性）
     this.rooms.delete(roomId)
   }
 
@@ -96,7 +104,7 @@ export class RoomManager {
     const existing = this.findMemberByConn(conn)
     if (existing) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧房
     const roomId = this.newRoomId()
-    const room = { roomId, members: [], state: 'WAITING', game: null, createdAt: this.now() }
+    const room = { roomId, members: [], game: null, createdAt: this.now() }
     this.rooms.set(roomId, room)
     return this.joinRoom(conn, name, roomId)
   }
@@ -111,7 +119,7 @@ export class RoomManager {
   joinRoom(conn, name, roomId) {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在或已解散' } }
-    if (room.state !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始，无法加入' } }
+    if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始，无法加入' } }
     const existing = this.findMemberByConn(conn)
     if (existing && existing.room !== room) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧房
     const seat = this.firstVacantSeat(room)
@@ -126,7 +134,7 @@ export class RoomManager {
 
   quickMatch(conn, name) {
     const candidates = [...this.rooms.values()]
-      .filter((r) => r.state === 'WAITING' && this.firstVacantSeat(r) !== -1)
+      .filter((r) => this.roomStateOf(r) === 'WAITING' && this.firstVacantSeat(r) !== -1)
       .sort((a, b) => a.createdAt - b.createdAt)
     if (candidates.length > 0) return this.joinRoom(conn, name, candidates[0].roomId)
     return this.createRoom(conn, name)
@@ -143,7 +151,7 @@ export class RoomManager {
   moveSeat(token, roomId, seat) {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在' } }
-    if (room.state !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能换座位' } }
+    if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能换座位' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
     if (!Number.isInteger(seat) || seat < 0 || seat > 3) return { error: { code: 'SEAT_INVALID', message: '座位号非法' } }
@@ -158,7 +166,7 @@ export class RoomManager {
   setReady(token, roomId, ready) {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在' } }
-    if (room.state !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能修改准备状态' } }
+    if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能修改准备状态' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
     me.ready = !!ready
@@ -167,11 +175,6 @@ export class RoomManager {
   }
 
   // ---------- 对局 ----------
-
-  /** 错误回执：发回该成员当前连接（断言测试与客户端提示都用它） */
-  sendError(member, code, message) {
-    if (member?.conn) member.conn.send({ type: 'error', payload: { code, message } })
-  }
 
   canStart(room) {
     if (room.members.length !== 4) return { ok: false, message: '需要 4 名玩家' }
@@ -182,16 +185,11 @@ export class RoomManager {
   startGame(token, roomId) {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在' } }
+    if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始' } }
     const me = this.memberByToken(room, token)
-    if (!me || !me.isHost) {
-      this.sendError(me, 'NOT_HOST', '只有房主能开始')
-      return { error: { code: 'NOT_HOST', message: '只有房主能开始' } }
-    }
+    if (!me || !me.isHost) return { error: { code: 'NOT_HOST', message: '只有房主能开始' } }
     const check = this.canStart(room)
-    if (!check.ok) {
-      this.sendError(me, 'CANNOT_START', check.message)
-      return { error: { code: 'CANNOT_START', message: check.message } }
-    }
+    if (!check.ok) return { error: { code: 'CANNOT_START', message: check.message } }
     this.beginRound(room, me.seat) // 首局掷骰者=房主座位
     return { ok: true }
   }
@@ -199,8 +197,10 @@ export class RoomManager {
   /** 开一局（首局或连续局）。rollerSeat：本局掷骰者座位 */
   beginRound(room, rollerSeat) {
     room.game = createGame(Math.random, rollerSeat)
-    room.state = 'PLAYING'
     room.settleAck = new Set()
+    room.timers = new Set() // 本局编排定时器（掷骰/托管），destroyRoom 时统一清理
+    room.diceInFlight = false
+    room.pendingDice = null
     room.fx = { dice: null, diceRolling: false, revealKept: false }
     this.pushRoomState(room)
     this.pushGameState(room)
@@ -222,104 +222,80 @@ export class RoomManager {
     return { view: viewOf(g, seat), fx: { ...room.fx }, roomId: room.roomId, yourSeat: seat }
   }
 
-  /** 通用动作入口：roll/play/discard。校验身份与轮次后委托 core */
+  /** 通用动作入口：roll/play/discard。校验身份与轮次后委托 core；失败只经返回值回传（消息路由层统一回执，避免双通道） */
   gameAction(token, type, payload) {
+    payload = payload || {}
     const room = this.roomOf(token)
     if (!room) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
-    const g = room.game
-    if (!g) {
-      this.sendError(me, 'NO_GAME', '对局未开始')
-      return { error: { code: 'NO_GAME', message: '对局未开始' } }
+    if (type !== 'game.roll' && type !== 'game.play' && type !== 'game.discard') {
+      return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } } // 协议层校验，不依赖对局状态
     }
+    const g = room.game
+    if (!g) return { error: { code: 'NO_GAME', message: '对局未开始' } }
 
     if (type === 'game.roll') {
-      if (g.state !== 'ROLLING') {
-        this.sendError(me, 'BAD_STATE', '当前不可掷骰')
-        return { error: { code: 'BAD_STATE', message: '当前不可掷骰' } }
-      }
-      if (g.rollerSeat !== me.seat) {
-        this.sendError(me, 'NOT_YOUR_TURN', '不是你的掷骰权')
-        return { error: { code: 'NOT_YOUR_TURN', message: '不是你的掷骰权' } }
-      }
-      if (me.aiTimer) {
-        this.sendError(me, 'NOT_YOUR_TURN', '托管中')
-        return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
-      }
-      const dice = 1 + Math.floor(Math.random() * 6)
+      if (g.state !== 'ROLLING') return { error: { code: 'BAD_STATE', message: '当前不可掷骰' } }
+      if (g.rollerSeat !== me.seat) return { error: { code: 'NOT_YOUR_TURN', message: '不是你的掷骰权' } }
+      if (me.aiTimer) return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
+      if (room.diceInFlight) return { error: { code: 'BAD_STATE', message: '正在掷骰中' } }
+      const dice = 1 + Math.floor(g.rng() * 6)
       this.scheduleDice(room, dice)
       return { ok: true }
     }
     if (type === 'game.play') {
-      if (g.state !== 'PLAYING') {
-        this.sendError(me, 'BAD_STATE', '非出牌阶段')
-        return { error: { code: 'BAD_STATE', message: '非出牌阶段' } }
-      }
-      if (g.currentSeat !== me.seat) {
-        this.sendError(me, 'NOT_YOUR_TURN', '没轮到你')
-        return { error: { code: 'NOT_YOUR_TURN', message: '没轮到你' } }
-      }
-      if (me.aiTimer) {
-        this.sendError(me, 'NOT_YOUR_TURN', '托管中')
-        return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
-      }
-      const res = play(g, me.seat, payload.tileIds || [], payload.side === 'top' ? 'top' : 'bottom')
-      if (!res.ok) {
-        this.sendError(me, 'ILLEGAL', res.reason)
-        return { error: { code: 'ILLEGAL', message: res.reason } }
-      }
+      if (g.state !== 'PLAYING') return { error: { code: 'BAD_STATE', message: '非出牌阶段' } }
+      if (g.currentSeat !== me.seat) return { error: { code: 'NOT_YOUR_TURN', message: '没轮到你' } }
+      if (me.aiTimer) return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
+      const tileIds = Array.isArray(payload?.tileIds) ? payload.tileIds : []
+      const res = play(g, me.seat, tileIds, payload.side === 'top' ? 'top' : 'bottom')
+      if (!res.ok) return { error: { code: 'ILLEGAL', message: res.reason } }
       this.afterAction(room)
       return { ok: true }
     }
     if (type === 'game.discard') {
-      if (g.state !== 'PLAYING') {
-        this.sendError(me, 'BAD_STATE', '非出牌阶段')
-        return { error: { code: 'BAD_STATE', message: '非出牌阶段' } }
-      }
-      if (g.currentSeat !== me.seat) {
-        this.sendError(me, 'NOT_YOUR_TURN', '没轮到你')
-        return { error: { code: 'NOT_YOUR_TURN', message: '没轮到你' } }
-      }
-      if (me.aiTimer) {
-        this.sendError(me, 'NOT_YOUR_TURN', '托管中')
-        return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
-      }
+      if (g.state !== 'PLAYING') return { error: { code: 'BAD_STATE', message: '非出牌阶段' } }
+      if (g.currentSeat !== me.seat) return { error: { code: 'NOT_YOUR_TURN', message: '没轮到你' } }
+      if (me.aiTimer) return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
       const res = discard(g, me.seat, payload.tileId)
-      if (!res.ok) {
-        this.sendError(me, 'ILLEGAL', res.reason)
-        return { error: { code: 'ILLEGAL', message: res.reason } }
-      }
+      if (!res.ok) return { error: { code: 'ILLEGAL', message: res.reason } }
       this.afterAction(room)
       return { ok: true }
     }
-    this.sendError(me, 'UNKNOWN_ACTION', '未知动作')
     return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } }
   }
 
   /** 掷骰服务端时间线：立即 rolling → 1.2s 定骰 → 再 2.4s 执行 rollDice 进 PLAYING */
   scheduleDice(room, dice) {
     const g = room.game
-    room.state = 'ROLLING'
+    room.diceInFlight = true // 编排进行中，拒绝二次 game.roll（否则展示骰与结算骰分叉）
+    room.pendingDice = dice
     room.fx = { dice: null, diceRolling: true, revealKept: false }
-    g.pendingDice = dice
     this.pushGameState(room)
-    setTimeout(() => {
+    const t1 = setTimeout(() => {
+      room.timers.delete(t1)
       if (room.game !== g || g.state !== 'ROLLING') return
       room.fx = { dice, diceRolling: false, revealKept: false }
       this.pushGameState(room)
     }, 1200)
-    setTimeout(() => {
+    room.timers.add(t1)
+    const t2 = setTimeout(() => {
+      room.timers.delete(t2)
+      if (room.game === g) {
+        room.diceInFlight = false
+        room.pendingDice = null
+      }
       if (room.game !== g || g.state !== 'ROLLING') return
       room.fx = { dice: null, diceRolling: false, revealKept: false }
       const res = rollDice(g, dice)
       if (res.ok) {
-        room.state = 'PLAYING'
         this.pushRoomState(room)
         this.pushGameState(room)
         this.scheduleAiTurn(room)
       }
     }, 1200 + 2400)
+    room.timers.add(t2)
   }
 
   /** 掷骰权在 AI/托管座位时自动掷（1s 延迟后走同一编排） */
@@ -329,9 +305,11 @@ export class RoomManager {
     const roller = room.members.find((m) => m.seat === g.rollerSeat)
     if (!roller) return
     if (roller.isAI || roller.aiTimer) {
-      setTimeout(() => {
-        if (room.game === g && g.state === 'ROLLING') this.scheduleDice(room, 1 + Math.floor(Math.random() * 6))
+      const t = setTimeout(() => {
+        room.timers.delete(t)
+        if (room.game === g && g.state === 'ROLLING') this.scheduleDice(room, 1 + Math.floor(room.game.rng() * 6))
       }, 1000)
+      room.timers.add(t)
     }
   }
 
@@ -340,7 +318,6 @@ export class RoomManager {
     const g = room.game
     if (g.state === 'SETTLE') {
       room.fx = { dice: null, diceRolling: false, revealKept: true }
-      room.state = 'SETTLE'
       for (const m of room.members) {
         if (m.conn) m.conn.send({ type: 'game.over', payload: { result: g.result, view: viewOf(g, m.seat), fx: { ...room.fx } } })
       }
@@ -359,23 +336,28 @@ export class RoomManager {
     const member = room.members.find((m) => m.seat === seat)
     if (!member || (!member.isAI && !member.aiTimer)) return // 真人在位，等待其动作
     const delay = 600 + Math.floor(Math.random() * 400)
-    setTimeout(() => {
+    const t = setTimeout(() => {
+      room.timers.delete(t)
       if (room.game !== g || g.state !== 'PLAYING' || g.currentSeat !== seat) return
       const m2 = room.members.find((x) => x.seat === seat)
       if (!m2 || (!m2.isAI && !m2.aiTimer)) return // 已重连，取消
       const hand = g.players[seat].hand
+      let ok = false
       if (g.openEnds === null) {
         const choice = aiChoosePlay(hand, null, { isLeadFirst: true, otherHands: g.players.filter((p) => p.seat !== seat).map((p) => p.hand) })
-        if (choice) play(g, seat, choice.tileIds, choice.side)
+        ok = choice ? play(g, seat, choice.tileIds, choice.side).ok : false
+        if (!ok) console.error('[rooms] AI lead play failed', { seat, choice })
       } else {
         const choice = aiChoosePlay(hand, g.openEnds, { isLeadFirst: false })
-        if (choice) play(g, seat, choice.tileIds, choice.side)
-        else {
+        if (choice) ok = play(g, seat, choice.tileIds, choice.side).ok
+        if (!ok) {
           const d = aiChooseDiscard(hand, g.openEnds)
-          if (d) discard(g, seat, d.tileId)
+          ok = d ? discard(g, seat, d.tileId).ok : false
         }
+        if (!ok) console.error('[rooms] AI follow failed', { seat })
       }
-      this.afterAction(room)
+      if (ok) this.afterAction(room) // 失败则不推进（避免死循环）；理论不可达路径，留日志排查
     }, delay)
+    room.timers.add(t)
   }
 }

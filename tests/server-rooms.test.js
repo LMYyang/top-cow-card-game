@@ -147,7 +147,7 @@ describe('RoomManager 房间流程', () => {
 
   it('setReady 对局中被拒（ROOM_STARTED）', () => {
     const { room, token } = mgr.createRoom(conn('甲'), '甲')
-    room.state = 'PLAYING' // 模拟对局已开始
+    room.game = { state: 'PLAYING' } // 模拟对局已开始（阶段派生自 game.state）
     const res = mgr.setReady(token, room.roomId, true)
     expect(res.error).toMatchObject({ code: 'ROOM_STARTED' })
   })
@@ -177,12 +177,19 @@ describe('开始对局与动作路由', () => {
     // 补齐同一房间至 4 人并全员准备（原稿 fullRoom() 另起新房，其 token 与本 room 不匹配）
     for (const n of ['丙', '丁']) mgr.joinRoom(conn(n), n, room.roomId)
     for (const m of room.members) mgr.setReady(m.token, room.roomId, true)
+    vi.useFakeTimers()
     c1.sent.length = 0
     const res = mgr.startGame(token, room.roomId)
     expect(res.error).toBeUndefined()
-    expect(room.state).toBe('PLAYING')
-    expect(room.game.players).toHaveLength(4) // 发牌在掷骰定头牌之后（见掷骰编排用例）
+    expect(mgr.roomStateOf(room)).toBe('ROLLING') // 开局先进入掷骰编排
+    const roller = room.members.find(m => m.seat === room.game.rollerSeat)
+    mgr.gameAction(roller.token, 'game.roll', {})
+    vi.advanceTimersByTime(3600) // 掷骰时间线走完才发牌进 PLAYING
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    expect(room.game.players).toHaveLength(4)
+    expect(room.game.players.every(p => p.hand.length === 6)).toBe(true) // 发牌在掷骰定头牌之后
     expect(c1.sent.some(m => m.type === 'game.state')).toBe(true)
+    vi.useRealTimers()
   })
 
   it('非房主开始被拒', () => {
@@ -191,16 +198,26 @@ describe('开始对局与动作路由', () => {
     expect(r1.error).toBeDefined()
   })
 
-  it('动作路由：非本座位出牌被拒并回 error 给发送者', () => {
+  it('对局中开始游戏被拒（ROOM_STARTED）', () => {
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    const again = mgr.startGame(tokens[0], room.roomId)
+    expect(again.error).toMatchObject({ code: 'ROOM_STARTED' })
+  })
+
+  it('动作路由：非本座位出牌被拒', () => {
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
     const wrongSeat = room.game.currentSeat
     const notTurnToken = tokens.find((t, i) => i !== wrongSeat)
-    const c = conn('路人')
-    room.members.find(m => m.token === notTurnToken).conn = c
     const res = mgr.gameAction(notTurnToken, 'game.play', { tileIds: ['t1-1'], side: 'bottom' })
     expect(res.error).toBeDefined()
-    expect(c.sent.some(m => m.type === 'error')).toBe(true)
+  })
+
+  it('动作路由：未知动作返回 UNKNOWN_ACTION', () => {
+    const { tokens } = fullRoom()
+    const res = mgr.gameAction(tokens[0], 'game.foo', {})
+    expect(res.error).toMatchObject({ code: 'UNKNOWN_ACTION' })
   })
 
   it('掷骰由服务端编排：立即 rolling，1.2s 定骰，2.4s 后进 PLAYING', () => {
@@ -212,12 +229,41 @@ describe('开始对局与动作路由', () => {
     const c = room.members.find(m => m.token === rollerToken).conn
     c.sent.length = 0
     mgr.gameAction(rollerToken, 'game.roll', {})
-    expect(room.state).toBe('ROLLING')
+    expect(mgr.roomStateOf(room)).toBe('ROLLING')
     expect(c.sent.some(m => m.type === 'game.state' && m.payload.fx.diceRolling === true)).toBe(true)
     vi.advanceTimersByTime(1200)
-    expect(c.sent.some(m => m.type === 'game.state' && m.payload.fx.dice === room.game.pendingDice)).toBe(true)
+    expect(c.sent.some(m => m.type === 'game.state' && m.payload.fx.dice === room.pendingDice)).toBe(true)
     vi.advanceTimersByTime(2400)
-    expect(room.state).toBe('PLAYING')
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    expect(room.game.players.every(p => p.hand.length === 6)).toBe(true) // 定骰后完成发牌
+    vi.useRealTimers()
+  })
+
+  it('掷骰进行中重复掷骰被拒', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    const rollerToken = tokens[room.game.rollerSeat]
+    const first = mgr.gameAction(rollerToken, 'game.roll', {})
+    expect(first.error).toBeUndefined()
+    const second = mgr.gameAction(rollerToken, 'game.roll', {})
+    expect(second.error).toMatchObject({ code: 'BAD_STATE' })
+    vi.advanceTimersByTime(3600)
+    expect(mgr.roomStateOf(room)).toBe('PLAYING') // 时间线只跑一次，正常开局
+    expect(room.game.players.every(p => p.hand.length === 6)).toBe(true)
+    expect(room.diceInFlight).toBe(false)
+    vi.useRealTimers()
+  })
+
+  it('tileIds 非数组被拒（ILLEGAL 出牌数量非法）', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    mgr.gameAction(tokens[room.game.rollerSeat], 'game.roll', {})
+    vi.advanceTimersByTime(3600) // 进入 PLAYING
+    const token = tokens[room.game.currentSeat]
+    const res = mgr.gameAction(token, 'game.play', { tileIds: 't1-1' })
+    expect(res.error).toMatchObject({ code: 'ILLEGAL', message: '出牌数量非法' })
     vi.useRealTimers()
   })
 
