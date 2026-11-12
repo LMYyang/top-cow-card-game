@@ -93,4 +93,61 @@ describe('RoomManager 房间流程', () => {
     expect(c1.sent.some(m => m.type === 'room.state')).toBe(true)
     expect(c2.sent.some(m => m.type === 'room.state')).toBe(true)
   })
+
+  it('token 唯一且非空；同一 conn 重复 createRoom 自动离开旧房', () => {
+    const r1 = mgr.createRoom(conn('甲'), '甲')
+    const r2 = mgr.createRoom(conn('乙'), '乙')
+    expect(r1.token).toBeTruthy()
+    expect(r2.token).toBeTruthy()
+    expect(r1.token).not.toBe(r2.token)
+    // 同一 conn 重复创建：旧房销毁（仅他一人），新房创建成功
+    const c = conn('丙')
+    const first = mgr.createRoom(c, '丙').room
+    expect(mgr.rooms.has(first.roomId)).toBe(true)
+    const second = mgr.createRoom(c, '丙')
+    expect(second.error).toBeUndefined()
+    expect(second.token).toBeTruthy()
+    expect(mgr.rooms.has(first.roomId)).toBe(false) // 旧房已销毁
+    expect(mgr.rooms.has(second.room.roomId)).toBe(true)
+    expect(second.room.members).toHaveLength(1)
+    expect(second.room.members[0]).toMatchObject({ name: '丙', isHost: true })
+  })
+
+  it('同一 conn 重复 joinRoom：自动离开旧房（旧房销毁）后加入新房', () => {
+    const c = conn('甲')
+    const roomA = mgr.createRoom(c, '甲').room
+    const roomB = mgr.createRoom(conn('乙'), '乙').room
+    const res = mgr.joinRoom(c, '甲', roomB.roomId)
+    expect(res.error).toBeUndefined()
+    expect(mgr.rooms.has(roomA.roomId)).toBe(false) // A 只有一人，已销毁
+    expect(mgr.rooms.has(roomB.roomId)).toBe(true)
+    expect(res.room.roomId).toBe(roomB.roomId)
+    expect(roomB.members.map(m => m.name)).toEqual(['乙', '甲'])
+  })
+
+  it('换座位：非法座位（99、-1、1.5）返回 SEAT_INVALID', () => {
+    const { room, token } = mgr.createRoom(conn('甲'), '甲')
+    for (const seat of [99, -1, 1.5]) {
+      const res = mgr.moveSeat(token, room.roomId, seat)
+      expect(res.error).toMatchObject({ code: 'SEAT_INVALID' })
+    }
+  })
+
+  it('roomState 快照剥离敏感字段（token/conn/graceTimer/aiTimer）', () => {
+    const { room } = mgr.createRoom(conn('甲'), '甲')
+    const snapshot = mgr.roomState(room)
+    const m0 = snapshot.members[0]
+    expect(m0).not.toHaveProperty('token')
+    expect(m0).not.toHaveProperty('conn')
+    expect(m0).not.toHaveProperty('graceTimer')
+    expect(m0).not.toHaveProperty('aiTimer')
+    expect(m0).toMatchObject({ seat: 0, name: '甲', isHost: true })
+  })
+
+  it('setReady 对局中被拒（ROOM_STARTED）', () => {
+    const { room, token } = mgr.createRoom(conn('甲'), '甲')
+    room.state = 'PLAYING' // 模拟对局已开始
+    const res = mgr.setReady(token, room.roomId, true)
+    expect(res.error).toMatchObject({ code: 'ROOM_STARTED' })
+  })
 })

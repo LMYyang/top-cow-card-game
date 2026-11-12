@@ -1,16 +1,16 @@
 /**
  * 房间与成员管理（服务器权威）。
- * Room: { roomId, members, state: 'WAITING'|'PLAYING'|'SETTLE', game, hostToken, createdAt }
+ * Room: { roomId, members, state: 'WAITING'|'PLAYING'|'SETTLE', game, createdAt }
  * 成员: { seat, token, name, connected, ready, isHost, isAI, conn, graceTimer, aiTimer }
  * token 是玩家身份凭证（重连用）；conn 是当前 WebSocket 连接（可变）。
  */
 
+import { randomUUID } from 'node:crypto'
+
 const GRACE_MS = 60_000 // 断线宽限：超时未重连则踢出（Task 3 使用）
 
-let tokenSeq = 0
 function makeToken() {
-  tokenSeq += 1
-  return `t${Date.now().toString(36)}-${tokenSeq}-${Math.floor(Math.random() * 1e6).toString(36)}`
+  return randomUUID() // 高熵不可猜测，重连凭证安全
 }
 
 export class RoomManager {
@@ -50,9 +50,50 @@ export class RoomManager {
     return -1
   }
 
+  /** 按 conn 反查成员（防同一连接重复加入产生幽灵成员），O(n) 足够 */
+  findMemberByConn(conn) {
+    for (const room of this.rooms.values()) {
+      const m = room.members.find((mm) => mm.conn === conn)
+      if (m) return { room, member: m }
+    }
+    return null
+  }
+
+  /** 从 WAITING 房间移除成员：销毁空房 / 转移房主并广播（不发 kicked，Task 3 的 leave 才发） */
+  removeMember(room, member) {
+    room.members = room.members.filter((m) => m !== member)
+    this.tokens.delete(member.token)
+    if (room.members.length === 0) {
+      this.destroyRoom(room.roomId)
+      return
+    }
+    if (member.isHost) this.promoteHost(room)
+    this.pushRoomState(room)
+  }
+
+  /** 房主转移：成员 isHost 为唯一事实来源（Task 3 复用） */
+  promoteHost(room) {
+    const next = room.members[0]
+    if (next) next.isHost = true
+  }
+
+  /** 销毁房间：清空 token 索引与成员连接引用（Task 3 会扩展定时器清理） */
+  destroyRoom(roomId) {
+    const room = this.rooms.get(roomId)
+    if (!room) return
+    for (const m of room.members) {
+      this.tokens.delete(m.token)
+      if (m.graceTimer) clearTimeout(m.graceTimer)
+      m.conn = null
+    }
+    this.rooms.delete(roomId)
+  }
+
   createRoom(conn, name) {
+    const existing = this.findMemberByConn(conn)
+    if (existing) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧房
     const roomId = this.newRoomId()
-    const room = { roomId, members: [], state: 'WAITING', game: null, hostToken: null, createdAt: this.now() }
+    const room = { roomId, members: [], state: 'WAITING', game: null, createdAt: this.now() }
     this.rooms.set(roomId, room)
     return this.joinRoom(conn, name, roomId)
   }
@@ -68,6 +109,8 @@ export class RoomManager {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在或已解散' } }
     if (room.state !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始，无法加入' } }
+    const existing = this.findMemberByConn(conn)
+    if (existing && existing.room !== room) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧房
     const seat = this.firstVacantSeat(room)
     if (seat === -1) return { error: { code: 'ROOM_FULL', message: '房间已满' } }
     const token = makeToken()
@@ -100,6 +143,7 @@ export class RoomManager {
     if (room.state !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能换座位' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
+    if (!Number.isInteger(seat) || seat < 0 || seat > 3) return { error: { code: 'SEAT_INVALID', message: '座位号非法' } }
     if (seat === me.seat) return { ok: true }
     const target = room.members.find((m) => m.seat === seat)
     if (target) return { error: { code: 'SEAT_TAKEN', message: '该座位已有人' } }
@@ -111,6 +155,7 @@ export class RoomManager {
   setReady(token, roomId, ready) {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在' } }
+    if (room.state !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能修改准备状态' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
     me.ready = !!ready
