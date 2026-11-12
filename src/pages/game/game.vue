@@ -267,7 +267,8 @@ function onConfirmDiscard() {
 
 // ---------- 飞牌动画 ----------
 // 出牌/扣牌入桌太快看不清来路：监听 tableHistory 新条目，让一张牌的克隆从出牌方头像位置
-// 飞向桌面中央（接上端从上入、下端从下入、扣牌从侧入），结束后由真实牌桌接管显示。
+// 飞向它在链上的实际落点（TableTimeline 给最新条目挂了 #latest-entry-anchor，牌落到链哪端
+// 就飞向哪端；扣牌飞向出牌方自己区域）。结束后由真实牌桌接管显示。
 // 定位用 id + getElementById：uni-app H5 下 <script setup> 组件默认关闭实例，
 // 父组件 ref 拿不到 $el（此前动画静默失效的根因），原生 DOM 查询最可靠。
 const fly = reactive({ tile: null, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
@@ -297,19 +298,31 @@ function anchorElOf(seat) {
   return elById({ 1: 'opp-right-anchor', 2: 'opp-top-anchor', 3: 'opp-left-anchor' }[seat])
 }
 
-/** 桌面中央（时间线容器）中心：飞牌终点 */
+/** 桌面中央（时间线容器）中心：飞牌兜底终点 */
 function tableCenter() {
   return centerOfEl(elById('timeline-anchor'))
 }
 
-/** 新入桌条目 → 飞牌参数；无法定位起终点时返回 null */
+/** 新入桌条目 → 飞牌参数；无法定位起终点时返回 null。
+ *  终点 to 延迟解析：watch 触发时 Vue 尚未把新 entry 渲染进 DOM（#latest-entry-anchor
+ *  还挂在上一张牌上），立即取会差一位；resolveTo 在双 rAF 后（渲染完成）才调用 */
 function flyFromEntry(entry) {
   const from = centerOfEl(anchorElOf(entry.seat))
-  const to = tableCenter()
-  if (!from || !to) return null
+  if (!from) return null
   const tile = entry.discarded || entry.tiles[entry.tiles.length - 1]
   if (!tile) return null
-  return { tile, from, to }
+  return {
+    tile,
+    from,
+    resolveTo() {
+      if (entry.discarded) {
+        // 扣牌不进时间线 → 飞向出牌方自己的区域（头像处）
+        return centerOfEl(anchorElOf(entry.seat)) || tableCenter()
+      }
+      // 链上实际落点：TableTimeline 给最新条目挂了 #latest-entry-anchor
+      return centerOfEl(elById('latest-entry-anchor')) || tableCenter()
+    },
+  }
 }
 
 /** 飞牌层样式：left/top 从起点过渡到终点（px 定位 + 过渡），transform 固定居中偏移 */
@@ -330,11 +343,15 @@ function playFly(entry) {
   fly.fromX = f.from.x
   fly.fromY = f.from.y
   fly.moving = false
-  // 双 rAF 确保起点样式已渲染，再切到过渡态飞向终点
+  // 双 rAF：起点样式已渲染且 Vue 已把新 entry 渲染进 DOM（#latest-entry-anchor 指向新牌），
+  // 此时才解析终点并切到过渡态（watch 触发瞬间锚点还是旧牌，立即取会差一位）
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      fly.fromX = f.to.x
-      fly.fromY = f.to.y
+      const to = f.resolveTo()
+      if (to) {
+        fly.fromX = to.x
+        fly.fromY = to.y
+      }
       fly.moving = true
     })
   })

@@ -10,6 +10,7 @@
           :key="item.tile.id"
           class="entry"
           :class="{ latest: item.tile.id === latestId }"
+          :id="item.tile.id === latestId ? 'latest-entry-anchor' : null"
         >
           <view class="seat-dot" :style="{ background: dotColor(item.seat) }" />
           <PlayingTile
