@@ -368,6 +368,12 @@ export class RoomManager {
 
   // ---------- 断线/重连/离开/销毁 ----------
 
+  /** 连接关闭：按 token 触发断线流程（index.js 调用） */
+  onConnClose(conn) {
+    if (!conn.token) return
+    this.onDisconnect(conn.token)
+  }
+
   /** 连接断开（非主动离开）。启动宽限计时 + AI 托管 */
   onDisconnect(token) {
     const room = this.roomOf(token)
