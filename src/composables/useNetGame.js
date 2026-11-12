@@ -1,5 +1,5 @@
 // src/composables/useNetGame.js
-import { reactive, computed, ref, getCurrentInstance, onUnmounted } from 'vue'
+import { reactive, computed, ref, watch, getCurrentInstance, onUnmounted } from 'vue'
 import { sharedNet } from '../utils/net.js'
 import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
 
@@ -7,9 +7,9 @@ import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayab
  * 联网局管理：接口与 useGame 一致，数据源为服务器推送。
  * view/fx 整体替换自 game.state 推送；动作为网络请求，结果以服务器推送为准。
  * 额外导出：connection（连接状态 ref）、restart()（发 settleContinue）、roomId、mySeat。
- * 挂载/订阅后会异步拉一次快照（reconnect 携带存储 token）：
+ * 挂载/订阅后拉一次快照（reconnect 携带存储 token）：
  * 开局时 room.vue 先于本页收到 game.state 推送即跳走，那条开局推送本页永远收不到，
- * 必须主动拉快照才能进入牌桌；后续自动重连成功也重跑一次（重连后的 socket 未认证）。
+ * 必须主动拉快照才能进入牌桌。
  */
 export function useNetGame(net = sharedNet()) {
   const view = reactive({
@@ -19,6 +19,7 @@ export function useNetGame(net = sharedNet()) {
   })
   const fx = reactive({ dice: null, diceRolling: false, revealKept: false, settleShow: false, lastMove: null })
   const connection = net.status
+  let stopWatch = null
   const roomId = ref(null)
   const mySeat = ref(0)
   const names = reactive({ 0: '我', 1: '下家', 2: '对家', 3: '上家' })
@@ -36,7 +37,7 @@ export function useNetGame(net = sharedNet()) {
   })
   // sharedNet() 是跨页面存活的模块单例：组件卸载时须退订，否则 game.vue 每次挂载都累积两个处理器
   // （仅组件上下文注册生命周期钩子；单测在组件外直接调用时不注册，避免警告）
-  if (getCurrentInstance()) onUnmounted(() => { offState(); offOver() })
+  if (getCurrentInstance()) onUnmounted(() => { offState(); offOver(); stopWatch?.() })
 
   /** 拉一次当前快照（fire-and-forget）：游戏未开局时无 gameState 推送，静默忽略错误 */
   async function fetchSnapshot() {
@@ -48,6 +49,14 @@ export function useNetGame(net = sharedNet()) {
     } catch { /* 未连接/超时：状态条已提示，快照缺失仅表现为空桌面 */ }
   }
   fetchSnapshot()
+  // 断线自动重连后的新 socket 未认证（conn.token=null，服务器推送按成员路由会漏发本端），
+  // 且服务器把掉线成员转 AI 托管——重连成功即重跑 reconnect 握手，恢复认证并拿回最新快照。
+  // 也兜底「首连失败后手动重试」场景（net.js 首连失败不自动重连）。
+  // 首次 'connecting'→'open' 也会触发一次重复拉取：幂等（服务器快照重发覆盖同一状态），可接受。
+  if (getCurrentInstance()) {
+    stopWatch = watch(connection, (s) => { if (s === 'open') fetchSnapshot() })
+    onUnmounted(() => stopWatch?.())
+  }
 
   /** UI 视角座位名：自己=「我」，其余显示成员昵称 */
   const labelOf = (seat) => (seat === mySeat.value ? '我' : names[seat] || `座位${seat}`)
