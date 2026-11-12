@@ -22,7 +22,8 @@ export function createNet() {
   let retries = 0
   let everOpened = false
   let manuallyClosed = false
-  const pending = new Map() // requestId -> { resolve, timer }
+  let reconnectTimer = null
+  const pending = new Map() // requestId -> { resolve, reject, timer }
   const listeners = new Map() // type -> Set<handler>
   const status = ref('connecting')
 
@@ -61,7 +62,8 @@ export function createNet() {
     }
     const delay = Math.min(1000 * 2 ** retries, RECONNECT_MAX_DELAY)
     retries += 1
-    setTimeout(() => {
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
       if (manuallyClosed) return
       const ws2 = new WebSocket(SERVER_WS_URL)
       ws = ws2
@@ -81,6 +83,7 @@ export function createNet() {
   }
 
   function connect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     manuallyClosed = false
     everOpened = false
     status.value = 'connecting'
@@ -116,7 +119,7 @@ export function createNet() {
         pending.delete(requestId)
         reject(new Error('请求超时'))
       }, REQUEST_TIMEOUT)
-      pending.set(requestId, { resolve, timer })
+      pending.set(requestId, { resolve, reject, timer })
       ws.send(JSON.stringify({ type, payload, requestId }))
     })
   }
@@ -130,9 +133,13 @@ export function createNet() {
   function close() {
     manuallyClosed = true
     status.value = 'closed'
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     if (ws) { try { ws.close() } catch { /* noop */ } }
     // 未决请求全部失败
-    for (const { timer } of pending.values()) clearTimeout(timer)
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer)
+      entry.reject(new Error('连接已关闭'))
+    }
     pending.clear()
   }
 

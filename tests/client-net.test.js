@@ -137,6 +137,35 @@ describe('net.js', () => {
     expect(net.status.value).toBe('closed')
   })
 
+  it('close() 手动关闭：未决请求立即 reject（连接已关闭），不悬挂', async () => {
+    const net = createNet()
+    const p = net.connect(); FakeWebSocket.last.__open(); await p
+    const req = net.request('room.join', {}).catch((e) => e)
+    net.close()
+    const err = await req
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toContain('关闭')
+  })
+
+  it('重连定时器未触发时调用 connect()：旧定时器被清除，不会创建第二个 WebSocket', async () => {
+    const net = createNet()
+    const p = net.connect(); FakeWebSocket.last.__open(); await p
+    FakeWebSocket.last.__close() // 断线 → 调度 1s 后重连
+    expect(net.status.value).toBe('reconnecting')
+    const reconnecting = FakeWebSocket.last
+    const p2 = net.connect() // 重连定时器未触发时手动重连
+    const ws2 = FakeWebSocket.last
+    expect(ws2).not.toBe(reconnecting)
+    vi.advanceTimersByTime(8000) // 推进超过旧退避延迟
+    expect(FakeWebSocket.last).toBe(ws2) // 旧定时器未创建新连接
+    ws2.__open(); await p2
+    expect(net.status.value).toBe('open')
+    const got = []
+    net.on('room.state', (pl) => got.push(pl))
+    ws2.__recv({ type: 'room.state', payload: { n: 1 } })
+    expect(got).toEqual([{ n: 1 }]) // 当前连接正常分发消息
+  })
+
   it('非 JSON 消息被忽略不崩溃', async () => {
     const net = createNet()
     const p = net.connect(); FakeWebSocket.last.__open(); await p
