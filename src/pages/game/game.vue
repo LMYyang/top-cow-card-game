@@ -224,9 +224,15 @@ function goHome() {
 <style scoped>
 .table {
   min-height: 100vh;
+  /* 手机浏览器的 100vh 是"大视口"高度（按地址栏收起后计算），地址栏展开时内容比可视区高，
+     底部"我的手牌区"会被浏览器工具栏遮住；dvh 动态视口高度随工具栏收展自适应，
+     老浏览器不支持时自动回退到上面的 100vh */
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   padding: 20rpx;
+  /* index.html 声明了 viewport-fit=cover，iPhone 底部 Home 指示条区域会压住内容，补足安全区高度 */
+  padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 .middle-row { flex: 1; display: flex; min-height: 0; padding-bottom: 8rpx; }

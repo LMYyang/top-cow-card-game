@@ -12,6 +12,8 @@ body {
   color: #f5f0e1;
   font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* 固定浅色配色方案：防止系统深色模式（手机浏览器强制反色）把米白牌面反转成深色导致点数看不清 */
+  color-scheme: light only;
 }
 
 /* 通用按钮 */
