@@ -56,6 +56,7 @@
         :side="mySide"
         :open-ends="view.openEnds"
         :reveal-kept="fx.revealKept"
+        :is-leader="view.leaderSeat === mySeatVal"
         @select="selectedId = $event"
         @choose-side="mySide = $event"
         @side-pick="onSidePick"

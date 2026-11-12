@@ -6,7 +6,7 @@
         <slot /> <!-- 亮牌阶段等提示：显示在头像正上方 -->
       </view>
       <view class="header-info">
-        <text class="name">我</text>
+        <text class="name">我{{ isLeader ? ' 👑' : '' }}</text>
         <text class="counts">牌 {{ hand.length }} · 扣 {{ kept.length }}</text>
       </view>
     </view>
@@ -63,6 +63,7 @@ const props = defineProps({
   side: { type: String, default: 'bottom' }, // 我选的放置端 bottom | top
   openEnds: { type: Object, default: null }, // 链两端待接点 { top, bottom }，首出前 null
   revealKept: { type: Boolean, default: false }, // 局末亮牌：翻开我扣的牌面
+  isLeader: { type: Boolean, default: false }, // 我是头牌（与各家 OpponentZone 的 👑 标记一致）
 })
 const emit = defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick'])
 
