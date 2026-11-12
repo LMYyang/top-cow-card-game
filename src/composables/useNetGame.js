@@ -7,6 +7,9 @@ import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayab
  * 联网局管理：接口与 useGame 一致，数据源为服务器推送。
  * view/fx 整体替换自 game.state 推送；动作为网络请求，结果以服务器推送为准。
  * 额外导出：connection（连接状态 ref）、restart()（发 settleContinue）、roomId、mySeat。
+ * 挂载/订阅后会异步拉一次快照（reconnect 携带存储 token）：
+ * 开局时 room.vue 先于本页收到 game.state 推送即跳走，那条开局推送本页永远收不到，
+ * 必须主动拉快照才能进入牌桌；后续自动重连成功也重跑一次（重连后的 socket 未认证）。
  */
 export function useNetGame(net = sharedNet()) {
   const view = reactive({
@@ -34,6 +37,17 @@ export function useNetGame(net = sharedNet()) {
   // sharedNet() 是跨页面存活的模块单例：组件卸载时须退订，否则 game.vue 每次挂载都累积两个处理器
   // （仅组件上下文注册生命周期钩子；单测在组件外直接调用时不注册，避免警告）
   if (getCurrentInstance()) onUnmounted(() => { offState(); offOver() })
+
+  /** 拉一次当前快照（fire-and-forget）：游戏未开局时无 gameState 推送，静默忽略错误 */
+  async function fetchSnapshot() {
+    try {
+      if (net.status.value !== 'open') await net.connect()
+      const token = uni.getStorageSync('dingniuzi_player_token')
+      const res = await net.request('reconnect', { token })
+      if (res.type === 'error') return // 房间已解散等：快照缺失，不弹错（页面留着等下一次推送）
+    } catch { /* 未连接/超时：状态条已提示，快照缺失仅表现为空桌面 */ }
+  }
+  fetchSnapshot()
 
   /** UI 视角座位名：自己=「我」，其余显示成员昵称 */
   const labelOf = (seat) => (seat === mySeat.value ? '我' : names[seat] || `座位${seat}`)
@@ -84,5 +98,5 @@ export function useNetGame(net = sharedNet()) {
   /** 掷骰权座位：以服务器 view.rollerSeat 为准；未开局时回退自己座位（单机语义为 0） */
   const diceRollerSeat = computed(() => view.rollerSeat ?? mySeat.value)
 
-  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, connection, roomId, mySeat }
+  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, connection, roomId, mySeat, fetchSnapshot }
 }

@@ -1,6 +1,8 @@
 <!-- src/pages/game/game.vue -->
 <template>
   <view class="table" :class="{ revealing: fx.revealKept }" @click="onRevealTap">
+    <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
+    <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 对家（上） -->
     <OpponentZone position="top" :seat="2" :label="labelOf(2)" :hand-count="opponentBySeat(2).handCount" :kept-count="opponentBySeat(2).keptCount" :is-leader="view.leaderSeat === 2" :last-move="lastMoveOf(2)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
 
@@ -14,8 +16,8 @@
           <view class="dice" :class="{ rolling: fx.diceRolling, landed: diceLanded }">{{ diceFace }}</view>
           <!-- 落定后先看点数，稍后揭示头牌，再自动进入出牌阶段 -->
           <view v-if="leaderRevealed" class="dice-result">{{ diceResultText }}</view>
-          <!-- 掷骰权在我时才显示按钮；机器人掷骰时到点自动掷，仅显示状态文案 -->
-          <button v-else-if="diceRollerSeat === 0" class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
+          <!-- 掷骰权在我时才显示按钮；他人掷骰时到点自动掷，仅显示状态文案（solo: 0=我；net: 服务器 rollerSeat） -->
+          <button v-else-if="diceRollerSeat === mySeatVal" class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
           <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
@@ -78,6 +80,7 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 import OpponentZone from '../../components/OpponentZone.vue'
 import CenterArea from '../../components/CenterArea.vue'
 import HandArea from '../../components/HandArea.vue'
@@ -85,19 +88,65 @@ import TableTimeline from '../../components/TableTimeline.vue'
 import PlayerAvatar from '../../components/PlayerAvatar.vue'
 import { placeSides } from '../../core/rules.js'
 import { useGame } from '../../composables/useGame.js'
+import { useNetGame } from '../../composables/useNetGame.js'
 
-const {
-  view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat,
-  roll, myPlay, myDiscard,
-} = useGame()
+/**
+ * 双模式接入：solo（单机 AI）与 net（联网对战）。
+ * 模式由 onLoad 的 query.mode 决定，此时才实例化对应 composable（useNetGame 订阅推送）。
+ * gameApi 就绪前模板已在渲染，全部绑定走 computed 代理 + 空对象兜底；gameApi 为 ref，
+ * 故 script 内访问一律带 .value（模板自动解包不受影响）。
+ */
+const isNet = ref(false)
+const gameApi = ref(null)
+onLoad((query) => {
+  isNet.value = query.mode === 'net'
+  gameApi.value = isNet.value ? useNetGame() : useGame()
+})
+
+function emptyView() {
+  return { state: '', myHand: [], myKept: [], opponents: [], tableHistory: [], openEnds: null, leaderSeat: null, currentSeat: null, rollerSeat: null, result: null }
+}
+function emptyFx() {
+  return { dice: null, diceRolling: false, settleShow: false, revealKept: false, lastMove: null }
+}
+const view = computed(() => gameApi.value?.view ?? emptyView())
+const fx = computed(() => gameApi.value?.fx ?? emptyFx())
+const myTurn = computed(() => gameApi.value?.myTurn.value ?? false)
+const mustDiscard = computed(() => gameApi.value?.mustDiscard.value ?? false)
+const playableIds = computed(() => gameApi.value?.playableIds.value ?? [])
+// 掷骰权座位：net 下以服务器 view.rollerSeat 为准（useNetGame 已聚合）；solo 恒为 0
+const diceRollerSeat = computed(() => gameApi.value?.diceRollerSeat.value ?? 0)
+const mySeatVal = computed(() => gameApi.value?.mySeat?.value ?? 0)
+// 连接状态（net）：非 open 时顶部显示断线重连条；solo 无此概念，恒 open
+const connection = computed(() => gameApi.value?.connection?.value ?? 'open')
 
 const selectedId = ref(null)
 const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下端
 
+/** UI 视角座位名（solo：固定称呼；net：服务器成员昵称） */
+const labelOf = (seat) => gameApi.value?.labelOf(seat) ?? String(seat)
+
+/** 动作代理：solo 同步返回 {ok,...}，net 为 async 请求，统一 await 后处理 */
+const roll = (...args) => gameApi.value?.roll(...args)
+async function myPlay(tileId, side) {
+  const res = await gameApi.value?.myPlay(tileId, side)
+  if (res?.ok) {
+    selectedId.value = null
+    mySide.value = 'bottom' // 出完复位为默认下端
+  } else {
+    uni.showToast({ title: res?.reason || '出牌失败', icon: 'none' })
+  }
+}
+async function myDiscard(tileId) {
+  const res = await gameApi.value?.myDiscard(tileId)
+  if (res?.ok) selectedId.value = null
+  else uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
+}
+
 const DICE_FACES = { 1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅' }
 // 掷骰动画期间骰面快速随机跳动（初始/落定后显示 fx.dice，动画期间随机）
 const randomFace = ref(1)
-const diceFace = computed(() => (fx.dice ? DICE_FACES[fx.dice] : DICE_FACES[randomFace.value]))
+const diceFace = computed(() => (fx.value.dice ? DICE_FACES[fx.value.dice] : DICE_FACES[randomFace.value]))
 
 // 落定后触发回弹动画；停顿展示点数，随后提示头牌归属，再自动进入出牌阶段
 const diceLanded = ref(false)
@@ -105,22 +154,22 @@ const leaderRevealed = ref(false)
 let diceFaceTimer = null
 let revealTimer = null
 const diceResultText = computed(() => {
-  if (!fx.dice) return ''
+  if (!fx.value.dice) return ''
   const OFFSET_NAMES = { 1: '自己', 5: '自己', 2: '下家', 6: '下家', 3: '对家', 4: '上家' }
-  return `掷出 ${fx.dice} 点 · ${OFFSET_NAMES[fx.dice]}是头牌`
+  return `掷出 ${fx.value.dice} 点 · ${OFFSET_NAMES[fx.value.dice]}是头牌`
 })
 function clearTimers() {
   if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
   if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
 }
-/** 亮牌阶段（结算弹窗前）：点击屏幕任意位置 → 弹出结算 */
+/** 亮牌阶段（结算弹窗前）：点击屏幕任意位置 → 弹出结算（settleShow 由客户端本地点亮，两模式一致） */
 function onRevealTap() {
-  if (fx.revealKept && !fx.settleShow && view.result) {
-    fx.settleShow = true
+  if (fx.value.revealKept && !fx.value.settleShow && view.value.result) {
+    fx.value.settleShow = true // fx 是 reactive 对象（computed 仅包引用），原地赋值两模式均生效
   }
 }
 watch(
-  () => fx.diceRolling,
+  () => fx.value.diceRolling,
   (rolling) => {
     if (rolling) {
       diceLanded.value = false
@@ -131,7 +180,7 @@ watch(
       }, 80)
     } else {
       if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
-      if (!fx.dice) return // 非落定（如重置），不进入揭示流程
+      if (!fx.value.dice) return // 非落定（如重置），不进入揭示流程
       // 落定：先复位 class 以便重复触发回弹动画
       diceLanded.value = false
       requestAnimationFrame(() => {
@@ -149,36 +198,36 @@ watch(
 onUnmounted(clearTimers)
 
 const turnText = computed(() => {
-  if (view.state !== 'PLAYING') return ''
-  if (view.currentSeat === 0) {
-    if (view.openEnds === null) return '你是头牌，请出第一张牌'
+  if (view.value.state !== 'PLAYING') return ''
+  if (view.value.currentSeat === mySeatVal.value) {
+    if (view.value.openEnds === null) return '你是头牌，请出第一张牌'
     return mustDiscard.value ? '无牌可接，请扣牌' : '轮到你出牌'
   }
-  return `等待 ${labelOf(view.currentSeat)} 行动…`
+  return `等待 ${labelOf(view.value.currentSeat)} 行动…`
 })
 
 function opponentBySeat(seat) {
-  return view.opponents.find((o) => o.seat === seat) || { handCount: 0, keptCount: 0 }
+  return view.value.opponents.find((o) => o.seat === seat) || { handCount: 0, keptCount: 0 }
 }
 /** 各家气泡显示"历史最后一条"行动（出牌/扣牌）：只标最新动作的归属者，别人出牌后即消失 */
 function lastMoveOf(seat) {
-  const history = view.tableHistory
+  const history = view.value.tableHistory
   if (!history || history.length === 0) return null
   const last = history[history.length - 1]
   return last.seat === seat ? last : null
 }
 
 /** 所有扣牌条目（供各 OpponentZone 展示自己扣的牌背） */
-const discardEntries = computed(() => view.tableHistory.filter((e) => e.discarded))
+const discardEntries = computed(() => view.value.tableHistory.filter((e) => e.discarded))
 
 /** 选中的牌：两端都可接时返回 null（需用户选端），否则返回唯一可接端；首出/不可接也返回 null */
 const selectedForcedSide = computed(() => {
-  if (!selectedId.value || view.openEnds === null) return null
+  if (!selectedId.value || view.value.openEnds === null) return null
   // 链两端点数相同（如 3|3）：上下端无差异，直接放下端，不弹选择器
-  if (view.openEnds.top === view.openEnds.bottom) return 'bottom'
-  const t = view.myHand.find((x) => x.id === selectedId.value)
+  if (view.value.openEnds.top === view.value.openEnds.bottom) return 'bottom'
+  const t = view.value.myHand.find((x) => x.id === selectedId.value)
   if (!t) return null
-  const options = placeSides(t, view.openEnds)
+  const options = placeSides(t, view.value.openEnds)
   if (options.length !== 1) return null // 0 个不可接；2 个由用户选
   return options[0].side
 })
@@ -186,46 +235,35 @@ const selectedForcedSide = computed(() => {
 function onConfirmPlay() {
   if (!selectedId.value) return
   // 若选中的牌只有一端可接，忽略手动选择、按真实可接端出（避免默认 bottom 被静默拒绝）
-  const side = selectedForcedSide.value || mySide.value
-  const res = myPlay(selectedId.value, side)
-  if (res.ok) {
-    selectedId.value = null
-    mySide.value = 'bottom' // 出完复位为默认下端
-  } else {
-    uni.showToast({ title: res.reason || '出牌失败', icon: 'none' })
-  }
+  myPlay(selectedId.value, selectedForcedSide.value || mySide.value)
 }
 
 /** 两端都可接时：点悬浮的"上端/下端"按钮即选定端并直接出牌（省去再点出牌按钮） */
 function onSidePick({ id, side }) {
   if (!id || selectedId.value !== id) return
-  const res = myPlay(id, side)
-  if (res.ok) {
-    selectedId.value = null
-    mySide.value = 'bottom'
-  } else {
-    uni.showToast({ title: res.reason || '出牌失败', icon: 'none' })
-  }
+  myPlay(id, side)
 }
 function onConfirmDiscard() {
   if (!selectedId.value) return
-  const res = myDiscard(selectedId.value)
-  if (res.ok) {
-    selectedId.value = null
-  } else {
-    uni.showToast({ title: res.reason || '扣牌失败', icon: 'none' })
-  }
+  myDiscard(selectedId.value)
 }
 
-function restart() {
+async function restart() {
+  if (isNet.value) {
+    // 联网局：服务器驱动下一局（settleContinue → 全员确认/超时后 beginRound 推送），
+    // 本地不写 storage、不重定向，仅收起结算弹窗等待服务器推送新局。
+    await gameApi.value?.restart()
+    fx.value.settleShow = false
+    return
+  }
   // 把上一局赢家写入 storage，useGame 初始化时读取作为下一局掷骰者（连续局规则）。
-  const winner = view.result?.winner
+  const winner = view.value.result?.winner
   if (winner !== undefined && winner !== null) {
     uni.setStorageSync('dingniuzi_last_winner', winner)
   }
-  fx.settleShow = false
-  fx.dice = null
-  fx.lastMove = null
+  fx.value.settleShow = false
+  fx.value.dice = null
+  fx.value.lastMove = null
   uni.redirectTo({ url: '/pages/game/game' })
 }
 function goHome() {
@@ -250,6 +288,12 @@ function goHome() {
   box-sizing: border-box;
 }
 .middle-row { flex: 1; display: flex; min-height: 0; padding-bottom: 8rpx; }
+/* 联网断线提示条：覆盖在页面顶部 */
+.net-bar {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: #a04030; color: #fff; font-size: 24rpx;
+  text-align: center; padding: 8rpx 0; z-index: 999;
+}
 /* 局末亮牌阶段：各区扣牌翻开后行数变多、整体变高，取消 flex 压缩让内容自然撑高，
    防止窄视口下对手区亮出的牌面底部被裁（页面可自然向下延展） */
 .table.revealing > * { flex-shrink: 0; }

@@ -4,17 +4,19 @@ import { describe, it, expect, vi } from 'vitest'
 globalThis.uni = {
   setStorageSync: vi.fn(),
   getStorageSync: (k) => ({ dingniuzi_player_name: '测试甲' }[k] ?? ''),
+  removeStorageSync: vi.fn(),
   showToast: vi.fn(),
   navigateTo: vi.fn(),
   reLaunch: vi.fn(),
 }
 
-// 可控 fake net：记录 request、测试直接注入推送（与 net.js 同接口：status/on/request）
+// 可控 fake net：记录 request、测试直接注入推送（与 net.js 同接口：status/on/request/connect）
 function fakeNet() {
   const handlers = new Map()
   return {
     status: { value: 'open' },
     sent: [],
+    async connect() { return undefined },
     on(type, h) {
       if (!handlers.has(type)) handlers.set(type, new Set())
       handlers.get(type).add(h)
@@ -115,7 +117,8 @@ describe('useNetGame', () => {
     })
     expect((await myPlay('t1', 'bottom')).ok).toBe(false)
     expect((await myDiscard('t1')).ok).toBe(false)
-    expect(net.sent).toHaveLength(0)
+    // 挂载快照的 reconnect 请求除外：断言的是"没轮到我"不发出对局动作请求
+    expect(net.sent.filter((s) => s.type !== 'reconnect')).toHaveLength(0)
   })
 
   it('game.over：result 写入 view，revealKept 置位', () => {
@@ -177,5 +180,55 @@ describe('useNetGame', () => {
     expect(a.view.state).toBe('PLAYING')
     expect(b.view.state).toBe('PLAYING')
     // 单测在组件外调用（无 getCurrentInstance）：订阅保持注册，推送仍生效（预期行为，不告警不崩溃）
+  })
+
+  it('挂载即拉快照：reconnect 回执带 gameState 时经 game.state 处理器填充视图', async () => {
+    const net = fakeNet()
+    uni.getStorageSync = (k) => ({ dingniuzi_player_token: 'tok-8' }[k] ?? '')
+    const gameState = {
+      view: { state: 'PLAYING', currentSeat: 3, openEnds: { top: 2, bottom: 4 }, myHand: [{ id: 't24-1', name: '二四', a: 2, b: 4 }], myKept: [], opponents: [], tableHistory: [], tableTile: null, leaderSeat: 3, rollerSeat: 3, result: null },
+      fx: { dice: null, diceRolling: false, revealKept: false },
+      roomId: 7, yourSeat: 1, names: { 3: '丁' },
+    }
+    net.request = async (type, payload) => {
+      net.sent.push({ type, payload })
+      if (type === 'reconnect') {
+        // 模拟服务器：先走推送通道重发快照（game.vue 只认订阅推送），再给请求回执
+        net.__push('game.state', gameState)
+        return { type: 'reconnected', payload: { room: {}, yourSeat: 1 } }
+      }
+      return { type: 'action.ok', payload: {} }
+    }
+    const { view, mySeat, roomId, labelOf } = useNetGame(net)
+    expect(net.sent.some((s) => s.type === 'reconnect' && s.payload.token === 'tok-8')).toBe(true)
+    expect(view.state).toBe('PLAYING') // 无需任何注入式推送，快照已生效（修复 room.vue 跳转造成的开局推送丢失）
+    expect(view.myHand).toHaveLength(1)
+    expect(mySeat.value).toBe(1)
+    expect(roomId.value).toBe(7)
+    expect(labelOf(3)).toBe('丁')
+  })
+
+  it('快照失败静默：reconnect 收 error 回执或请求抛异常都不崩、不清空已有视图', async () => {
+    const net = fakeNet()
+    uni.getStorageSync = (k) => ({ dingniuzi_player_token: 'tok-9' }[k] ?? '')
+    net.request = async (type) => {
+      if (type === 'reconnect') return { type: 'error', payload: { code: 'ROOM_GONE', message: '房间已解散' } }
+      return { type: 'action.ok', payload: {} }
+    }
+    const { view } = useNetGame(net)
+    await Promise.resolve() // 让 fetchSnapshot 的微队列跑完
+    expect(view.state).toBe('') // 无快照即保持空视图，不抛错
+  })
+
+  it('连接未开时快照先 connect 再请求；未存 token 也照发（服务器回错误回执，静默忽略）', async () => {
+    const net = fakeNet()
+    net.status = { value: 'connecting' }
+    uni.getStorageSync = () => ''
+    let connected = false
+    net.connect = async () => { connected = true; net.status.value = 'open' }
+    const { fetchSnapshot } = useNetGame(net)
+    await fetchSnapshot()
+    expect(connected).toBe(true)
+    expect(net.sent.some((s) => s.type === 'reconnect' && s.payload.token === '')).toBe(true)
   })
 })
