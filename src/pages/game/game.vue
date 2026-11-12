@@ -4,11 +4,15 @@
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 对家（上） -->
-    <OpponentZone ref="oppTopRef" position="top" :seat="2" :label="labelOf(2)" :hand-count="opponentBySeat(2).handCount" :kept-count="opponentBySeat(2).keptCount" :is-leader="view.leaderSeat === 2" :last-move="lastMoveOf(2)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+    <view id="opp-top-anchor">
+      <OpponentZone position="top" :seat="2" :label="labelOf(2)" :hand-count="opponentBySeat(2).handCount" :kept-count="opponentBySeat(2).keptCount" :is-leader="view.leaderSeat === 2" :last-move="lastMoveOf(2)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+    </view>
 
     <view class="middle-row">
       <!-- 上家（左） -->
-      <OpponentZone ref="oppLeftRef" position="left" :seat="3" :label="labelOf(3)" :hand-count="opponentBySeat(3).handCount" :kept-count="opponentBySeat(3).keptCount" :is-leader="view.leaderSeat === 3" :last-move="lastMoveOf(3)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+      <view id="opp-left-anchor">
+        <OpponentZone position="left" :seat="3" :label="labelOf(3)" :hand-count="opponentBySeat(3).handCount" :kept-count="opponentBySeat(3).keptCount" :is-leader="view.leaderSeat === 3" :last-move="lastMoveOf(3)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+      </view>
 
       <!-- 中央 -->
       <CenterArea>
@@ -21,7 +25,7 @@
           <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
-          <view ref="timelineRef" class="timeline-wrap">
+          <view id="timeline-anchor" class="timeline-wrap">
             <TableTimeline :history="view.tableHistory" :open-ends="view.openEnds" />
           </view>
           <view class="turn-hint">
@@ -35,30 +39,33 @@
       </CenterArea>
 
       <!-- 下家（右） -->
-      <OpponentZone ref="oppRightRef" position="right" :seat="1" :label="labelOf(1)" :hand-count="opponentBySeat(1).handCount" :kept-count="opponentBySeat(1).keptCount" :is-leader="view.leaderSeat === 1" :last-move="lastMoveOf(1)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+      <view id="opp-right-anchor">
+        <OpponentZone position="right" :seat="1" :label="labelOf(1)" :hand-count="opponentBySeat(1).handCount" :kept-count="opponentBySeat(1).keptCount" :is-leader="view.leaderSeat === 1" :last-move="lastMoveOf(1)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+      </view>
     </view>
 
     <!-- 我的手牌 -->
-    <HandArea
-      ref="handAreaRef"
-      :hand="view.myHand"
-      :kept="view.myKept"
-      :playable-ids="playableIds"
-      :my-turn="myTurn"
-      :must-discard="mustDiscard"
-      :selected-id="selectedId"
-      :side="mySide"
-      :open-ends="view.openEnds"
-      :reveal-kept="fx.revealKept"
-      @select="selectedId = $event"
-      @choose-side="mySide = $event"
-      @side-pick="onSidePick"
-      @confirm-play="onConfirmPlay"
-      @confirm-discard="onConfirmDiscard"
-    >
-      <!-- 亮牌阶段提示：位于"本局结束"与我的头像之间，等待玩家点击任意处继续 -->
-      <view v-if="fx.revealKept && !fx.settleShow" class="tap-hint">点击屏幕任意处继续</view>
-    </HandArea>
+    <view id="hand-anchor">
+      <HandArea
+        :hand="view.myHand"
+        :kept="view.myKept"
+        :playable-ids="playableIds"
+        :my-turn="myTurn"
+        :must-discard="mustDiscard"
+        :selected-id="selectedId"
+        :side="mySide"
+        :open-ends="view.openEnds"
+        :reveal-kept="fx.revealKept"
+        @select="selectedId = $event"
+        @choose-side="mySide = $event"
+        @side-pick="onSidePick"
+        @confirm-play="onConfirmPlay"
+        @confirm-discard="onConfirmDiscard"
+      >
+        <!-- 亮牌阶段提示：位于"本局结束"与我的头像之间，等待玩家点击任意处继续 -->
+        <view v-if="fx.revealKept && !fx.settleShow" class="tap-hint">点击屏幕任意处继续</view>
+      </HandArea>
+    </view>
 
     <!-- 飞牌动画层：出牌/扣牌后牌从出牌方飞向桌面链端（fixed 覆盖层，不参与布局） -->
     <view v-if="fly.tile" class="fly-layer" :style="flyStyle">
@@ -131,13 +138,6 @@ const connection = computed(() => unwrap(gameApi.value?.connection, 'open'))
 
 const selectedId = ref(null)
 const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下端
-
-// 飞牌动画的定位锚点（组件实例 ref；$el 为 uni-app H5 下组件根元素）
-const oppTopRef = ref(null)
-const oppLeftRef = ref(null)
-const oppRightRef = ref(null)
-const handAreaRef = ref(null)
-const timelineRef = ref(null)
 
 /** UI 视角座位名（solo：固定称呼；net：服务器成员昵称） */
 const labelOf = (seat) => gameApi.value?.labelOf(seat) ?? String(seat)
@@ -267,32 +267,37 @@ function onConfirmDiscard() {
 // ---------- 飞牌动画 ----------
 // 出牌/扣牌入桌太快看不清来路：监听 tableHistory 新条目，让一张牌的克隆从出牌方头像位置
 // 飞向桌面中央（接上端从上入、下端从下入、扣牌从侧入），结束后由真实牌桌接管显示。
+// 定位用 id + getElementById：uni-app H5 下 <script setup> 组件默认关闭实例，
+// 父组件 ref 拿不到 $el（此前动画静默失效的根因），原生 DOM 查询最可靠。
 const fly = reactive({ tile: null, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
 let flyTimer = null
 
-/** 屏幕坐标（px）：查 ref 元素中心；查不到返回 null（不播动画，静默降级） */
-function centerOf(refEl) {
-  const el = refEl?.$el || refEl
+/** 屏幕坐标（px）：DOM 元素中心；查不到返回 null（不播动画，静默降级） */
+function centerOfEl(el) {
   if (!el || typeof el.getBoundingClientRect !== 'function') return null
   const r = el.getBoundingClientRect()
+  if (r.width === 0 && r.height === 0) return null
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
 }
 
-/** 出牌方（座位）头像元素：我=手牌区头像，其余=各 OpponentZone 头像 */
-function avatarElOf(seat) {
-  if (seat === mySeatVal.value) return handAreaRef.value?.$el?.querySelector?.('.avatar-wrap') || handAreaRef.value?.querySelector?.('.avatar-wrap')
-  const zone = { 1: oppRightRef, 2: oppTopRef, 3: oppLeftRef }[seat]
-  return zone?.value?.$el?.querySelector?.('.avatar') || zone?.value?.querySelector?.('.avatar')
+function elById(id) {
+  return typeof document !== 'undefined' ? document.getElementById(id) : null
+}
+
+/** 出牌方（座位）锚点元素：我=手牌区包裹层（头含头像），其余=各 OpponentZone 包裹层 */
+function anchorElOf(seat) {
+  if (seat === mySeatVal.value) return elById('hand-anchor')
+  return elById({ 1: 'opp-right-anchor', 2: 'opp-top-anchor', 3: 'opp-left-anchor' }[seat])
 }
 
 /** 桌面中央（时间线容器）中心：飞牌终点 */
 function tableCenter() {
-  return centerOf(timelineRef.value)
+  return centerOfEl(elById('timeline-anchor'))
 }
 
 /** 新入桌条目 → 飞牌参数；无法定位起终点时返回 null */
 function flyFromEntry(entry) {
-  const from = centerOf(avatarElOf(entry.seat))
+  const from = centerOfEl(anchorElOf(entry.seat))
   const to = tableCenter()
   if (!from || !to) return null
   const tile = entry.discarded || entry.tiles[entry.tiles.length - 1]
@@ -300,16 +305,15 @@ function flyFromEntry(entry) {
   return { tile, from, to }
 }
 
-/** 飞牌层样式：起点（scale 略大）→ 桌面中心（落到正常大小），横牌到达时旋转 90° */
-const flyStyle = computed(() => {
-  const base = { left: `${fly.fromX}px`, top: `${fly.fromY}px` }
-  if (!fly.moving) return base
-  return {
-    ...base,
-    transform: 'translate(-50%, -50%)',
-    transition: 'left 0.9s cubic-bezier(0.3, 0.7, 0.4, 1), top 0.9s cubic-bezier(0.3, 0.7, 0.4, 1), transform 0.9s ease',
-  }
-})
+/** 飞牌层样式：left/top 从起点过渡到终点（px 定位 + 过渡），transform 固定居中偏移 */
+const flyStyle = computed(() => ({
+  left: `${fly.fromX}px`,
+  top: `${fly.fromY}px`,
+  transform: 'translate(-50%, -50%) scale(1.15)',
+  transition: fly.moving
+    ? 'left 0.9s cubic-bezier(0.3, 0.7, 0.4, 1), top 0.9s cubic-bezier(0.3, 0.7, 0.4, 1)'
+    : 'none',
+}))
 
 function playFly(entry) {
   const f = flyFromEntry(entry)
@@ -318,8 +322,6 @@ function playFly(entry) {
   fly.tile = f.tile
   fly.fromX = f.from.x
   fly.fromY = f.from.y
-  fly.toX = f.to.x
-  fly.toY = f.to.y
   fly.moving = false
   // 双 rAF 确保起点样式已渲染，再切到过渡态飞向终点
   requestAnimationFrame(() => {
@@ -475,7 +477,7 @@ async function goHome() {
   pointer-events: none;
   filter: drop-shadow(0 8rpx 16rpx rgba(0, 0, 0, 0.5));
 }
-/* 包一层缩放容器：飞行中牌略放大（1.15），避免直接 transform 与定位 translate 冲突 */
-.fly-layer :deep(.tile) { transform: scale(1.15); transition: transform 0.9s ease; }
 .timeline-wrap { display: flex; justify-content: center; width: 100%; }
+/* 定位锚点包裹层：不改变内部布局（display: contents），仅提供 getElementById 锚点 */
+#opp-top-anchor, #opp-left-anchor, #opp-right-anchor, #hand-anchor { display: contents; }
 </style>
