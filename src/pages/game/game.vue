@@ -26,7 +26,7 @@
         </template>
         <template v-else-if="view.state === 'PLAYING'">
           <view id="timeline-anchor" class="timeline-wrap">
-            <TableTimeline :history="view.tableHistory" :open-ends="view.openEnds" />
+            <TableTimeline :history="view.tableHistory" :open-ends="view.openEnds" :latest-hidden="latestHidden" />
           </view>
           <view class="turn-hint">
             {{ turnText }}
@@ -266,12 +266,15 @@ function onConfirmDiscard() {
 }
 
 // ---------- 飞牌动画 ----------
-// 出牌/扣牌入桌太快看不清来路：监听 tableHistory 新条目，让一张牌的克隆从出牌方头像位置
+// 出牌入桌太快看不清来路：监听 tableHistory 新条目，让一张牌的克隆从出牌方头像位置
 // 飞向它在链上的实际落点（TableTimeline 给最新条目挂了 #latest-entry-anchor，牌落到链哪端
-// 就飞向哪端；扣牌飞向出牌方自己区域）。结束后由真实牌桌接管显示。
+// 就飞向哪端）。飞行期间链上的真牌隐藏（latestHidden），落地瞬间显现，避免"克隆与真牌
+// 同时出现"的穿帮。扣牌不飞（会暴露扣的牌面），扣牌条目直接显示。
 // 定位用 id + getElementById：uni-app H5 下 <script setup> 组件默认关闭实例，
 // 父组件 ref 拿不到 $el（此前动画静默失效的根因），原生 DOM 查询最可靠。
 const fly = reactive({ tile: null, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
+// 飞行中隐藏链上真牌（传给 TableTimeline 控制最新条目可见性）
+const latestHidden = ref(false)
 let flyTimer = null
 
 /** 屏幕坐标（px）：元素或其内部第一个有尺寸的后代的中心。
@@ -303,22 +306,19 @@ function tableCenter() {
   return centerOfEl(elById('timeline-anchor'))
 }
 
-/** 新入桌条目 → 飞牌参数；无法定位起终点时返回 null。
+/** 新入桌条目 → 飞牌参数；扣牌不飞（返回 null），无法定位起终点也不飞。
  *  终点 to 延迟解析：watch 触发时 Vue 尚未把新 entry 渲染进 DOM（#latest-entry-anchor
  *  还挂在上一张牌上），立即取会差一位；resolveTo 在双 rAF 后（渲染完成）才调用 */
 function flyFromEntry(entry) {
+  if (entry.discarded) return null // 扣牌：不展示飞牌（飞牌会亮出牌面，暴露扣的什么牌）
   const from = centerOfEl(anchorElOf(entry.seat))
   if (!from) return null
-  const tile = entry.discarded || entry.tiles[entry.tiles.length - 1]
+  const tile = entry.tiles[entry.tiles.length - 1]
   if (!tile) return null
   return {
     tile,
     from,
     resolveTo() {
-      if (entry.discarded) {
-        // 扣牌不进时间线 → 飞向出牌方自己的区域（头像处）
-        return centerOfEl(anchorElOf(entry.seat)) || tableCenter()
-      }
       // 链上实际落点：TableTimeline 给最新条目挂了 #latest-entry-anchor
       return centerOfEl(elById('latest-entry-anchor')) || tableCenter()
     },
@@ -343,6 +343,7 @@ function playFly(entry) {
   fly.fromX = f.from.x
   fly.fromY = f.from.y
   fly.moving = false
+  latestHidden.value = true // 飞行期间隐藏链上真牌，落地瞬间显现
   // 双 rAF：起点样式已渲染且 Vue 已把新 entry 渲染进 DOM（#latest-entry-anchor 指向新牌），
   // 此时才解析终点并切到过渡态（watch 触发瞬间锚点还是旧牌，立即取会差一位）
   requestAnimationFrame(() => {
@@ -355,18 +356,18 @@ function playFly(entry) {
       fly.moving = true
     })
   })
-  // 动画完成后隐藏克隆（真实牌桌 TableTimeline 已显示新牌），0.95s > 0.9s 过渡避免闪断
-  flyTimer = setTimeout(() => { fly.tile = null; fly.moving = false }, 950)
+  // 动画完成：隐藏克隆、显现真牌（真牌恰在此位置，视觉无缝衔接），0.95s > 0.9s 过渡避免闪断
+  flyTimer = setTimeout(() => { fly.tile = null; fly.moving = false; latestHidden.value = false }, 950)
 }
 onUnmounted(() => clearTimeout(flyTimer))
 
-/** 监听桌面历史：出现新条目（出牌/扣牌）即起飞克隆牌。solo 与 net 共用（数据源都是 tableHistory） */
+/** 监听桌面历史：出现新出牌条目即起飞克隆牌（扣牌条目不飞）。solo 与 net 共用（数据源都是 tableHistory） */
 watch(
   () => view.value.tableHistory.length,
   (n, old) => {
     if (!n || (old !== undefined && n <= old)) return
     const entry = view.value.tableHistory[n - 1]
-    if (entry && view.value.state !== 'SETTLE') playFly(entry)
+    if (entry?.tiles && view.value.state !== 'SETTLE') playFly(entry)
   }
 )
 

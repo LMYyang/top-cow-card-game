@@ -9,7 +9,7 @@
           v-for="item in colItems(col)"
           :key="item.tile.id"
           class="entry"
-          :class="{ latest: item.tile.id === latestId }"
+          :class="{ latest: item.tile.id === latestId, hidden: latestHidden && item.tile.id === latestId }"
           :id="item.tile.id === latestId ? 'latest-entry-anchor' : null"
         >
           <view class="seat-dot" :style="{ background: dotColor(item.seat) }" />
@@ -41,6 +41,7 @@ const props = defineProps({
   // 超出一列高度后像真实牌桌一样"拐弯"进入下一列（蛇形多列），所有牌全尺寸完整可见
   tileH: { type: Number, default: 96 },
   openEnds: { type: Object, default: null }, // { top, bottom } 链两端待接点数；首出前 null
+  latestHidden: { type: Boolean, default: false }, // 飞牌动画期间隐藏最新条目（克隆牌落地瞬间才显现）
 })
 
 /** 只取出牌条目（扣牌条目不进时间线，各自显示在自己区域旁） */
@@ -207,6 +208,10 @@ function dotColor(seat) {
 .entry.latest {
   box-shadow: 0 0 0 3rpx #c9a227;
   border-radius: 8rpx;
+}
+/* 飞牌动画期间隐藏最新条目：克隆牌飞抵后才显现（visibility 保留占位，锚点坐标可测） */
+.entry.latest.hidden {
+  visibility: hidden;
 }
 /* 拐弯箭头：位于两列之间，对齐拐点处，指示链条蛇形延伸方向 */
 .turn-arrow {
