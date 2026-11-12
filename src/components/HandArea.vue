@@ -39,7 +39,8 @@
     </view>
     <view class="actions" v-if="myTurn">
       <view class="btn-row">
-        <button class="btn-primary" :disabled="!selectedId || mustDiscard" @click="$emit('confirm-play')">出牌</button>
+        <!-- 该牌上下端都可接且两端点数不同：必须先点"上端/下端"选端（点选端即出牌），出牌按钮禁用防误触默认端 -->
+        <button class="btn-primary" :disabled="!selectedId || mustDiscard || bothEnds" @click="$emit('confirm-play')">出牌</button>
         <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('confirm-discard')">扣牌</button>
       </view>
     </view>
@@ -95,6 +96,8 @@ const sideOptions = computed(() => {
   return options
 })
 const bothEnds = computed(() => sideOptions.value.length === 2)
+
+defineExpose({ bothEnds })
 </script>
 
 <style scoped>
