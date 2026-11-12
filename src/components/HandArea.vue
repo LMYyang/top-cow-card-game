@@ -20,16 +20,17 @@
         :dimmed="myTurn && playableIds.length > 0 && !playableIds.includes(t.id)"
         @click="$emit('select', t.id)"
       />
-    </view>
-    <view class="kept-row" v-if="kept.length">
-      <text class="kept-label">扣牌：</text>
-      <PlayingTile
-        v-for="t in kept"
-        :key="t.id"
-        :tile="revealKept ? t : null"
-        size="sm"
-        :face-down="!revealKept"
-      />
+      <!-- 扣牌与手牌同一行（不单独占行）：不挤压下方出牌/扣牌按钮空间 -->
+      <template v-if="kept.length">
+        <text class="kept-label">扣牌：</text>
+        <PlayingTile
+          v-for="t in kept"
+          :key="t.id"
+          :tile="revealKept ? t : null"
+          size="sm"
+          :face-down="!revealKept"
+        />
+      </template>
     </view>
     <view class="actions" v-if="myTurn">
       <view v-if="bothEnds" class="side-picker">
@@ -94,8 +95,7 @@ const bothEnds = computed(() => sideOptions.value.length === 2)
 .name { font-size: 24rpx; }
 .counts { font-size: 20rpx; color: #b0a685; }
 .hint.warn { color: #e0a030; font-size: 24rpx; }
-.hand { display: flex; gap: 10rpx; justify-content: center; flex-wrap: wrap; }
-.kept-row { display: flex; align-items: center; gap: 8rpx; }
+.hand { display: flex; gap: 10rpx; justify-content: center; align-items: center; flex-wrap: wrap; }
 .kept-label { font-size: 22rpx; color: #b0a685; }
 .actions { display: flex; gap: 20rpx; align-items: center; flex-wrap: wrap; justify-content: center; }
 .side-picker { display: flex; align-items: center; gap: 8rpx; }

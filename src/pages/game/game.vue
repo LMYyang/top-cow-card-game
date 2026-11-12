@@ -19,7 +19,7 @@
           <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
-          <TableTimeline :history="view.tableHistory" />
+          <TableTimeline :history="view.tableHistory" :open-ends="view.openEnds" />
           <view class="turn-hint">
             {{ turnText }}
           </view>
