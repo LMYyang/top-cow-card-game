@@ -267,8 +267,8 @@ describe('开始对局与动作路由', () => {
     vi.useRealTimers()
   })
 
-  // Task 3 实现 onDisconnect 后启用
-  it.skip('完整对局：全员掉线托管，可推进到 SETTLE', () => {
+  // Task 3 已实现 onDisconnect
+  it('完整对局：全员掉线托管，可推进到 SETTLE', () => {
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
     vi.useFakeTimers()
@@ -277,5 +277,84 @@ describe('开始对局与动作路由', () => {
     expect(room.game.state).toBe('SETTLE')
     expect(room.game.result).toBeTruthy()
     vi.useRealTimers()
+  })
+})
+
+describe('断线重连与结算', () => {
+  it('掉线进入托管（aiTimer 置位）；重连后收回托管并收到完整快照', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    mgr.onDisconnect(tokens[1])
+    const m2 = room.members.find(m => m.token === tokens[1])
+    expect(m2.connected).toBe(false)
+    expect(m2.aiTimer).toBeTruthy() // 托管已启动
+    // 重连
+    const c2b = conn('乙')
+    const res = mgr.reconnect(c2b, tokens[1])
+    expect(res.error).toBeUndefined()
+    expect(m2.connected).toBe(true)
+    expect(m2.aiTimer).toBeNull()
+    expect(res.gameState).toBeTruthy() // 收到 game.state 快照
+    expect(c2b.sent.some(x => x.type === 'game.state')).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it('宽限期 60s 未重连：标记移除并清理', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    mgr.onDisconnect(tokens[1])
+    vi.advanceTimersByTime(60_000)
+    const m2 = room.members.find(m => m.token === tokens[1])
+    expect(m2.gone).toBe(true) // 标记移除
+    expect(mgr.tokens.has(tokens[1])).toBe(false) // token 索引清空
+    vi.useRealTimers()
+  })
+
+  it('WAITING 阶段房主离开：房间销毁（测试房为唯一成员时的场景已由 removeMember 覆盖，此处测多人房主转移）', () => {
+    const { room, tokens } = fullRoom()
+    // 甲（房主）主动离开 → WAITING 阶段成员移除、房主转移
+    const res = mgr.leave(tokens[0])
+    expect(res.ok).toBe(true)
+    const next = room.members.find(m => !m.gone)
+    expect(next.isHost).toBe(true)
+    expect(mgr.tokens.has(tokens[0])).toBe(false)
+  })
+
+  it('settleContinue：全员确认后开下一局，掷骰者=上局赢家', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+    expect(room.game.state).toBe('SETTLE')
+    const winner = room.game.result.winner
+    mgr.gameAction(tokens[0], 'game.settleContinue', {})
+    mgr.gameAction(tokens[1], 'game.settleContinue', {})
+    mgr.gameAction(tokens[2], 'game.settleContinue', {})
+    mgr.gameAction(tokens[3], 'game.settleContinue', {})
+    expect(room.game.state).toBe('ROLLING')
+    expect(room.game.rollerSeat).toBe(winner)
+    vi.useRealTimers()
+  })
+
+  it('settleContinue 5s 超时自动继续', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+    mgr.gameAction(tokens[0], 'game.settleContinue', {})
+    vi.advanceTimersByTime(5000)
+    expect(room.game.state).toBe('ROLLING')
+    vi.useRealTimers()
+  })
+
+  it('token 索引在房间销毁后清空', () => {
+    const { room, tokens } = fullRoom()
+    for (const t of tokens) mgr.leave(t)
+    expect(mgr.tokens.size).toBe(0)
+    expect(mgr.rooms.size).toBe(0)
   })
 })

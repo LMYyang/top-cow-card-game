@@ -229,7 +229,7 @@ export class RoomManager {
     if (!room) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
-    if (type !== 'game.roll' && type !== 'game.play' && type !== 'game.discard') {
+    if (type !== 'game.roll' && type !== 'game.play' && type !== 'game.discard' && type !== 'game.settleContinue') {
       return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } } // 协议层校验，不依赖对局状态
     }
     const g = room.game
@@ -263,6 +263,7 @@ export class RoomManager {
       this.afterAction(room)
       return { ok: true }
     }
+    if (type === 'game.settleContinue') return this.settleContinue(token)
     return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } }
   }
 
@@ -307,7 +308,11 @@ export class RoomManager {
     if (roller.isAI || roller.aiTimer) {
       const t = setTimeout(() => {
         room.timers.delete(t)
-        if (room.game === g && g.state === 'ROLLING') this.scheduleDice(room, 1 + Math.floor(room.game.rng() * 6))
+        const r2 = room.members.find((m) => m.seat === g.rollerSeat)
+        if (!r2 || (!r2.isAI && !r2.aiTimer)) return // 托管座位已重连，取消代掷
+        if (room.game === g && g.state === 'ROLLING' && !room.diceInFlight) {
+          this.scheduleDice(room, 1 + Math.floor(room.game.rng() * 6))
+        }
       }, 1000)
       room.timers.add(t)
     }
@@ -359,5 +364,119 @@ export class RoomManager {
       if (ok) this.afterAction(room) // 失败则不推进（避免死循环）；理论不可达路径，留日志排查
     }, delay)
     room.timers.add(t)
+  }
+
+  // ---------- 断线/重连/离开/销毁 ----------
+
+  /** 连接断开（非主动离开）。启动宽限计时 + AI 托管 */
+  onDisconnect(token) {
+    const room = this.roomOf(token)
+    if (!room) return
+    const me = this.memberByToken(room, token)
+    if (!me) return
+    me.connected = false
+    me.conn = null
+    if (me.graceTimer) clearTimeout(me.graceTimer)
+    me.graceTimer = setTimeout(() => {
+      if (me.connected || me.gone) return
+      me.gone = true
+      this.tokens.delete(token)
+      if (this.roomStateOf(room) === 'WAITING') {
+        // 未开局：直接移除成员（走既有 removeMember：空房销毁/房主转移/推送）
+        this.removeMember(room, me)
+      } else {
+        // 对局中：座位空缺由托管继续（aiTimer 已在），通知其余真人
+        this.pushRoomState(room)
+      }
+    }, GRACE_MS)
+    this.enableAiControl(room, me)
+    this.pushRoomState(room)
+  }
+
+  /** 掉线座位进入托管：标记 aiTimer，若正轮到该座位立即调度 */
+  enableAiControl(room, member) {
+    if (member.isAI || member.aiTimer) return
+    member.aiTimer = true
+    const g = room.game
+    if (!g) return
+    if (g.state === 'PLAYING' && g.currentSeat === member.seat) this.scheduleAiTurn(room)
+    if (g.state === 'ROLLING' && g.rollerSeat === member.seat) this.maybeAutoRoll(room)
+  }
+
+  /** 重连收回托管 */
+  disableAiControl(room, member) {
+    member.aiTimer = null
+  }
+
+  /** 断线重连：恢复身份，下发完整快照（room.state + game.state） */
+  reconnect(conn, token) {
+    const room = this.roomOf(token)
+    if (!room) return { error: { code: 'ROOM_GONE', message: '房间已解散' } }
+    const me = this.memberByToken(room, token)
+    if (!me || me.gone) return { error: { code: 'ROOM_GONE', message: '房间已解散' } }
+    if (me.conn && me.conn !== conn) { try { me.conn.close() } catch { /* 旧连接已死 */ } }
+    me.conn = conn
+    me.connected = true
+    if (me.graceTimer) { clearTimeout(me.graceTimer); me.graceTimer = null }
+    this.disableAiControl(room, me)
+    conn.send({ type: 'room.state', payload: { room: this.roomState(room) } })
+    let gameState = null
+    if (room.game) {
+      gameState = this.gameView(room, me.seat)
+      conn.send({ type: 'game.state', payload: gameState })
+    }
+    this.pushRoomState(room, token) // 通知他人
+    return { room, seat: me.seat, gameState }
+  }
+
+  /** 主动离开。WAITING 移除成员（房主转移/空房销毁）；对局中按断线处理（宽限+托管） */
+  leave(token) {
+    const room = this.roomOf(token)
+    if (!room) return { ok: true }
+    const me = this.memberByToken(room, token)
+    if (!me) return { ok: true }
+    if (me.graceTimer) { clearTimeout(me.graceTimer); me.graceTimer = null }
+    if (this.roomStateOf(room) === 'WAITING') {
+      this.removeMember(room, me)
+      return { ok: true }
+    }
+    // 对局中视为断线（走宽限+托管，无法真正退赛）
+    if (me.conn) { try { me.conn.close() } catch { /* noop */ } }
+    this.onDisconnect(token)
+    return { ok: true }
+  }
+
+  /** 定时清理：WAITING 且全员断线的僵尸房 */
+  sweep() {
+    for (const room of [...this.rooms.values()]) {
+      const alive = room.members.some((m) => m.connected && !m.gone)
+      if (this.roomStateOf(room) === 'WAITING' && !alive) this.destroyRoom(room.roomId)
+    }
+  }
+
+  // ---------- 结算继续 ----------
+
+  /** 结算后点继续：全员确认（或 5s 超时）开下一局，掷骰者=上局赢家 */
+  settleContinue(token) {
+    const room = this.roomOf(token)
+    if (!room || !room.game || room.game.state !== 'SETTLE') return { error: { code: 'BAD_STATE', message: '非结算阶段' } }
+    const me = this.memberByToken(room, token)
+    if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
+    room.settleAck.add(me.seat)
+    const active = room.members.filter((m) => !m.gone).length
+    if (room.settleAck.size >= active) {
+      this.startNextRound(room)
+    } else if (!room.settleTimer) {
+      room.settleTimer = setTimeout(() => this.startNextRound(room), 5000)
+      if (room.timers) room.timers.add(room.settleTimer)
+    }
+    return { ok: true }
+  }
+
+  startNextRound(room) {
+    if (room.settleTimer) { clearTimeout(room.settleTimer); room.settleTimer = null }
+    if (!room.game || room.game.state !== 'SETTLE') return
+    const winner = room.game.result.winner
+    this.beginRound(room, winner)
   }
 }
