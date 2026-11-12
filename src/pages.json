@@ -7,6 +7,14 @@
     {
       "path": "pages/game/game",
       "style": { "navigationBarTitleText": "顶牛子", "navigationStyle": "custom", "disableScroll": true }
+    },
+    {
+      "path": "pages/lobby/lobby",
+      "style": { "navigationBarTitleText": "顶牛子", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/room/room",
+      "style": { "navigationBarTitleText": "顶牛子", "navigationStyle": "custom" }
     }
   ],
   "globalStyle": {

@@ -11,6 +11,7 @@
     </view>
     <view class="menu-buttons">
       <button class="btn-primary" @click="startGame">开始游戏</button>
+      <button class="btn-secondary" @click="startOnline">联网对战</button>
       <view class="stats-card">
         <view class="stats-row">
           <text class="stats-label">总积分</text>
@@ -116,6 +117,10 @@ onShow(() => {
 
 function startGame() {
   uni.navigateTo({ url: '/pages/game/game' })
+}
+
+function startOnline() {
+  uni.navigateTo({ url: '/pages/lobby/lobby' })
 }
 </script>
 
