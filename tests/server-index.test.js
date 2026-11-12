@@ -37,8 +37,13 @@ function client() {
   const opened = new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject) })
   const request = (type, payload = {}) => {
     const id = `req-${Math.random().toString(36).slice(2)}`
-    return new Promise((resolve) => {
-      waiters.push({ pred: (m) => m.requestId === id, resolve })
+    return new Promise((resolve, reject) => {
+      // 超时兜底：服务器漏回回执时快速失败，而非挂起整个测试
+      const timer = setTimeout(() => reject(new Error(`request('${type}') 超时：未收到 requestId=${id} 的回执`)), 3000)
+      waiters.push({
+        pred: (m) => m.requestId === id,
+        resolve: (msg) => { clearTimeout(timer); resolve(msg) },
+      })
       ws.send(JSON.stringify({ type, payload, requestId: id }))
     })
   }
@@ -108,4 +113,81 @@ describe('server/index.js 消息路由', () => {
     expect(res.type).toBe('error')
     expect(res.payload.code).toBe('UNKNOWN_TYPE')
   })
+
+  it('BAD_JSON 帧返回 error，且连接保持可用', async () => {
+    const c = client()
+    await c.opened
+    c.ws.send('not json') // 非法帧：服务端应回 BAD_JSON 而非崩服/断连
+    const bad = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('未收到 BAD_JSON error')), 3000)
+      const check = () => {
+        const hit = c.inbox.find((m) => m.type === 'error' && m.payload?.code === 'BAD_JSON')
+        if (hit) { clearTimeout(t); resolve(hit) }
+      }
+      check()
+      c.ws.on('message', check)
+    })
+    expect(bad.payload.code).toBe('BAD_JSON')
+    // 同一连接继续可用：证明坏帧没有杀死连接
+    const res = await c.request('reconnect', { token: 'x' })
+    expect(res.type).toBe('error')
+    expect(res.payload.code).toBe('ROOM_GONE')
+  })
+
+  it('重连后被取代的旧连接关闭不影响新连接', async () => {
+    const s1 = client()
+    await s1.opened
+    const createRes = await s1.request('room.create', { name: '甲' })
+    expect(createRes.type).toBe('room.created')
+    const token = createRes.payload.token
+
+    const s2 = client() // 同一玩家的重连连接
+    await s2.opened
+    const reRes = await s2.request('reconnect', { token })
+    expect(reRes.type).toBe('reconnected')
+
+    s1.ws.terminate() // 旧连接此刻才被关闭（reconnect 内部已将其取代）
+    await new Promise((r) => setTimeout(r, 200))
+    // 修复点：onDisconnect 带上 conn 后会忽略被取代连接的过期 close，新连接不受影响
+    const res = await s2.request('room.ready', { ready: true })
+    expect(res.type).toBe('room.ready.ok')
+  })
+
+  it('对局中不能创建/加入新房间（ROOM_STARTED，成员不被移出原房间）', async () => {
+    const host = await fullGame()
+    const createRes = await host.request('room.create', { name: '甲' })
+    expect(createRes.type).toBe('error')
+    expect(createRes.payload.code).toBe('ROOM_STARTED')
+    // 旧成员身份保留：仍可在原房间正常操作（请求有回执即证明未掉线）
+    const ready = await host.request('room.ready', { ready: true })
+    expect(ready.type).toBe('error') // 对局中改准备状态被拒（NOT 掉线类错误）
+    expect(ready.payload.code).toBe('ROOM_STARTED')
+  })
+
+  it('对局中 leave 先收到回执再断开', async () => {
+    const host = await fullGame()
+    const res = await host.request('room.leave')
+    expect(res.type).toBe('room.left') // 回执先于 socket 关闭送达
+  })
 })
+
+/** 构建 4 人满员并已开局的真实对局，返回房主客户端（座位 0） */
+async function fullGame() {
+  const host = client()
+  await host.opened
+  const createRes = await host.request('room.create', { name: '甲' })
+  const roomId = createRes.payload.room.roomId
+  const guests = []
+  for (const n of ['乙', '丙', '丁']) {
+    const c = client()
+    await c.opened
+    const r = await c.request('room.join', { name: n, roomId })
+    expect(r.type).toBe('room.joined')
+    guests.push(c)
+  }
+  await host.request('room.ready', { ready: true })
+  for (const c of guests) await c.request('room.ready', { ready: true })
+  const startRes = await host.request('game.start', {})
+  expect(startRes.type).toBe('game.started')
+  return host
+}

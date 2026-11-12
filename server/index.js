@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { RoomManager } from './rooms.js'
 
@@ -13,7 +14,7 @@ export function createServerApp(port = 3001) {
   const httpServer = createServer((_req, res) => {
     res.writeHead(426).end('WebSocket only') // 拒绝普通 HTTP 请求
   })
-  const wss = new WebSocketServer({ server: httpServer })
+  const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 }) // 限制单帧大小，防恶意大帧
 
   wss.on('connection', (socket) => {
     // 连接级包装：send 支持对象并自动 JSON；close 幂等
@@ -23,6 +24,8 @@ export function createServerApp(port = 3001) {
       send(obj) { if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj)) },
       close() { try { socket.close() } catch { /* noop */ } },
     }
+    // 收帧异常（非 mask 帧/非法 UTF-8/超 maxPayload）会 emit 'error'，无监听会 uncaughtException 崩服
+    socket.on('error', (err) => console.error('[server] socket error:', err.message))
     socket.on('message', (raw) => {
       let msg
       try { msg = JSON.parse(raw.toString()) } catch {
@@ -48,7 +51,8 @@ export function createServerApp(port = 3001) {
 
 /** 消息路由：type → RoomManager 方法。有 requestId 时带 requestId 回执 */
 function handle(mgr, conn, msg) {
-  const { type, payload = {}, requestId } = msg || {}
+  const { type, requestId } = msg || {}
+  const payload = (msg && msg.payload) || {}
   const reply = (t, p) => conn.send({ type: t, payload: p, ...(requestId ? { requestId } : {}) })
   const replyError = (code, message) => reply('error', { code, message })
 
@@ -90,9 +94,11 @@ function handle(mgr, conn, msg) {
       return reply('room.ready.ok', {})
     }
     case 'room.leave': {
+      // 先回执再离开：对局中 leave 会关闭连接，后发回执将永远无法送达
+      reply('room.left', {})
       mgr.leave(conn.token)
       conn.token = null
-      return reply('room.left', {})
+      return
     }
     case 'game.start': {
       const room = mgr.roomOf(conn.token)
@@ -109,24 +115,27 @@ function handle(mgr, conn, msg) {
       return reply('action.ok', {})
     }
     case 'reconnect': {
-      const res = mgr.reconnect(conn, String(payload.token || ''))
+      const reqToken = String(payload.token || '')
+      if (conn.token && conn.token !== reqToken) mgr.leave(conn.token) // 跨房重连：先按旧 token 退出旧房（WAITING 移除；对局中按断线宽限处理）
+      const res = mgr.reconnect(conn, reqToken)
       if (res.error) return replyError(res.error.code, res.error.message)
-      conn.token = String(payload.token)
+      conn.token = reqToken
       return reply('reconnected', { room: mgr.roomState(res.room), yourSeat: res.seat })
     }
     default:
-      return replyError('UNKNOWN_TYPE', `未知消息类型: ${type}`)
+      return replyError('UNKNOWN_TYPE', '未知消息类型') // 不回显原始 type，防注入/反射
   }
 }
 
 function sanitizeName(name) {
-  const s = String(name ?? '').trim().slice(0, 12)
+  // 先剔除控制字符与 RTL 覆写字符（可被用于日志/界面欺骗），再截断
+  const s = String(name ?? '').replace(/[\u0000-\u001f\u202a-\u202e]/g, '').trim().slice(0, 12)
   return s || '玩家'
 }
 
 // 直接运行时启动（被 import 时不启动）
-const entry = process.argv[1]?.replace(/\\/g, '/')
-if (entry && import.meta.url.endsWith(entry)) {
+const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : ''
+if (entry && entry === import.meta.url) {
   const app = createServerApp(Number(process.env.PORT || 3001))
   app.httpServer.listen(app.port, () => console.log(`[dingniuzi] ws server listening on :${app.port}`))
 }

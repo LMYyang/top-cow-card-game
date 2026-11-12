@@ -102,7 +102,11 @@ export class RoomManager {
 
   createRoom(conn, name) {
     const existing = this.findMemberByConn(conn)
-    if (existing) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧房
+    if (existing && this.roomStateOf(existing.room) !== 'WAITING') {
+      // 对局进行中的旧成员身份不能丢弃（否则其他 3 人局面卡死）：拒绝换房
+      return { error: { code: 'ROOM_STARTED', message: '对局进行中，不能更换房间' } }
+    }
+    if (existing) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧 WAITING 房
     const roomId = this.newRoomId()
     const room = { roomId, members: [], game: null, createdAt: this.now() }
     this.rooms.set(roomId, room)
@@ -120,10 +124,17 @@ export class RoomManager {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在或已解散' } }
     if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始，无法加入' } }
-    const existing = this.findMemberByConn(conn)
-    if (existing && existing.room !== room) this.removeMember(existing.room, existing.member) // 换房：先自动离开旧房
     const seat = this.firstVacantSeat(room)
     if (seat === -1) return { error: { code: 'ROOM_FULL', message: '房间已满' } }
+    // 校验全部通过后才处理旧成员身份：避免"先移除后校验失败"导致玩家凭空掉出房间
+    const existing = this.findMemberByConn(conn)
+    if (existing && existing.room !== room) {
+      if (this.roomStateOf(existing.room) !== 'WAITING') {
+        // 对局进行中的旧成员身份不能丢弃（否则其他 3 人局面卡死）：拒绝换房
+        return { error: { code: 'ROOM_STARTED', message: '对局进行中，不能更换房间' } }
+      }
+      this.removeMember(existing.room, existing.member) // 换房：自动离开旧 WAITING 房
+    }
     const token = makeToken()
     const member = { seat, token, name, connected: true, gone: false, ready: false, isHost: room.members.length === 0, isAI: false, conn, graceTimer: null, aiTimer: null }
     room.members.push(member)
@@ -368,18 +379,19 @@ export class RoomManager {
 
   // ---------- 断线/重连/离开/销毁 ----------
 
-  /** 连接关闭：按 token 触发断线流程（index.js 调用） */
+  /** 连接关闭：按 token 触发断线流程（index.js 调用）。带上 conn 供过期关闭识别 */
   onConnClose(conn) {
     if (!conn.token) return
-    this.onDisconnect(conn.token)
+    this.onDisconnect(conn.token, conn)
   }
 
-  /** 连接断开（非主动离开）。启动宽限计时 + AI 托管 */
-  onDisconnect(token) {
+  /** 连接断开（非主动离开）。启动宽限计时 + AI 托管。conn 用于忽略已被新连接取代的过期关闭事件 */
+  onDisconnect(token, conn = null) {
     const room = this.roomOf(token)
     if (!room) return
     const me = this.memberByToken(room, token)
     if (!me) return
+    if (conn && me.conn && me.conn !== conn) return // 该连接已被更新连接取代（重连后旧连接才关闭），忽略此关闭事件
     me.connected = false
     me.conn = null
     if (me.graceTimer) clearTimeout(me.graceTimer)
