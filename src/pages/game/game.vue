@@ -267,7 +267,12 @@ async function restart() {
   fx.value.lastMove = null
   uni.redirectTo({ url: '/pages/game/game' })
 }
-function goHome() {
+async function goHome() {
+  if (isNet.value) {
+    // 联网局必须通知服务器退房：对局中 leave 视为断线（60s 宽限 + AI 托管），
+    // 否则连接仍存活、座位永不进入托管，轮到该座位时全场卡死。
+    try { await gameApi.value?.leave() } catch { /* 已断线等场景：服务器宽限兜底 */ }
+  }
   // 不用 navigateBack：restart 走 redirectTo 重开本页，H5 下历史栈里会残留上一局游戏页，
   // navigateBack 会退回栈里前一个 game 实例（看起来像"又跳回游戏"）。reLaunch 清空页面栈直达主菜单。
   uni.reLaunch({ url: '/pages/index/index' })

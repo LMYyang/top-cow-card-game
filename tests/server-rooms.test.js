@@ -156,6 +156,14 @@ describe('RoomManager 房间流程', () => {
     const res = mgr.setReady(token, room.roomId, true)
     expect(res.error).toMatchObject({ code: 'ROOM_STARTED' })
   })
+
+  it('gameView 携带成员昵称表 names（seat→name，供客户端 labelOf）', () => {
+    const { room } = mgr.createRoom(conn('甲'), '甲')
+    mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    room.game = { state: 'PLAYING', players: [0, 1].map((seat) => ({ seat, hand: [], kept: [] })), tableTile: null, openEnds: null, tableHistory: [], result: null, leaderSeat: null, rollerSeat: null, currentSeat: null }
+    const gv = mgr.gameView(room, 0)
+    expect(gv.names).toMatchObject({ 0: '甲', 1: '乙' })
+  })
 })
 
 /** 4 人满员已准备的房间 */
@@ -378,5 +386,16 @@ describe('断线重连与结算', () => {
     for (const t of tokens) mgr.leave(t)
     expect(mgr.tokens.size).toBe(0)
     expect(mgr.rooms.size).toBe(0)
+  })
+
+  it('sweep：WAITING 空房保留 60s 宽限，超龄才销毁（重连窗口不被提前压缩）', () => {
+    const { room } = mgr.createRoom(conn('甲'), '甲')
+    room.members[0].connected = false // 模拟全员掉线（未标记 gone）
+    room.createdAt = 1000 // now=1000，房龄 0s
+    mgr.sweep()
+    expect(mgr.rooms.has(room.roomId)).toBe(true) // 宽限期内仍保留
+    room.createdAt = 1000 - 60_000 // 房龄恰 60s
+    mgr.sweep()
+    expect(mgr.rooms.has(room.roomId)).toBe(false) // 超过 60s 销毁
   })
 })

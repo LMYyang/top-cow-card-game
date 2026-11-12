@@ -227,10 +227,12 @@ export class RoomManager {
     }
   }
 
-  /** 组装某座位的游戏视图（core viewOf + fx） */
+  /** 组装某座位的游戏视图（core viewOf + fx + 成员昵称表，客户端 labelOf 显示真实昵称） */
   gameView(room, seat) {
     const g = room.game
-    return { view: viewOf(g, seat), fx: { ...room.fx }, roomId: room.roomId, yourSeat: seat }
+    const names = {}
+    for (const m of room.members) names[m.seat] = m.name
+    return { view: viewOf(g, seat), fx: { ...room.fx }, roomId: room.roomId, yourSeat: seat, names }
   }
 
   /** 通用动作入口：roll/play/discard。校验身份与轮次后委托 core；失败只经返回值回传（消息路由层统一回执，避免双通道） */
@@ -464,12 +466,13 @@ export class RoomManager {
     return { ok: true }
   }
 
-  /** 定时清理：WAITING 且无人在线的僵尸房；对局中全员掉线（无人点继续）的死房 */
+  /** 定时清理：WAITING 且无人在线的僵尸房（保留 60s 宽限，与断线踢出时限一致）；对局中全员掉线（无人点继续）的死房 */
   sweep() {
     for (const room of [...this.rooms.values()]) {
       const alive = room.members.some((m) => m.connected && !m.gone)
       const allGone = room.members.length > 0 && room.members.every((m) => m.gone)
-      if ((this.roomStateOf(room) === 'WAITING' && !alive) || allGone) this.destroyRoom(room.roomId)
+      const waitingStale = this.roomStateOf(room) === 'WAITING' && !alive && room.members.every((m) => m.gone || this.now() - room.createdAt >= GRACE_MS)
+      if (waitingStale || allGone) this.destroyRoom(room.roomId)
     }
   }
 

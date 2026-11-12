@@ -104,8 +104,13 @@ export function useNetGame(net = sharedNet()) {
     if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
   }
 
+  /** 退房：结算页回主菜单前调用；对局中服务器视为断线（宽限+托管），WAITING 中直接移除 */
+  async function leave() {
+    try { await net.request('room.leave', {}) } catch { /* 连接已断：服务器宽限/清理兜底 */ }
+  }
+
   /** 掷骰权座位：以服务器 view.rollerSeat 为准；未开局时回退自己座位（单机语义为 0） */
   const diceRollerSeat = computed(() => view.rollerSeat ?? mySeat.value)
 
-  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, connection, roomId, mySeat, fetchSnapshot }
+  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, leave, connection, roomId, mySeat, fetchSnapshot }
 }
