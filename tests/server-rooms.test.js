@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { RoomManager } from '../server/rooms.js'
+import { viewOf } from '../src/core/game.js'
 
 let mgr
 beforeEach(() => {
@@ -149,5 +150,86 @@ describe('RoomManager 房间流程', () => {
     room.state = 'PLAYING' // 模拟对局已开始
     const res = mgr.setReady(token, room.roomId, true)
     expect(res.error).toMatchObject({ code: 'ROOM_STARTED' })
+  })
+})
+
+/** 4 人满员已准备的房间 */
+function fullRoom() {
+  const c1 = conn('甲')
+  const { room, token } = mgr.createRoom(c1, '甲')
+  const tokens = [token]
+  for (const n of ['乙', '丙', '丁']) {
+    const r = mgr.joinRoom(conn(n), n, room.roomId)
+    tokens.push(r.token)
+    mgr.setReady(r.token, room.roomId, true)
+  }
+  mgr.setReady(token, room.roomId, true)
+  return { room, tokens }
+}
+
+describe('开始对局与动作路由', () => {
+  it('未满员开始被拒；满员全准备开始成功并广播 game.state', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    const early = mgr.startGame(token, room.roomId)
+    expect(early.error).toBeDefined()
+    // 补齐同一房间至 4 人并全员准备（原稿 fullRoom() 另起新房，其 token 与本 room 不匹配）
+    for (const n of ['丙', '丁']) mgr.joinRoom(conn(n), n, room.roomId)
+    for (const m of room.members) mgr.setReady(m.token, room.roomId, true)
+    c1.sent.length = 0
+    const res = mgr.startGame(token, room.roomId)
+    expect(res.error).toBeUndefined()
+    expect(room.state).toBe('PLAYING')
+    expect(room.game.players).toHaveLength(4) // 发牌在掷骰定头牌之后（见掷骰编排用例）
+    expect(c1.sent.some(m => m.type === 'game.state')).toBe(true)
+  })
+
+  it('非房主开始被拒', () => {
+    const { room, tokens } = fullRoom()
+    const r1 = mgr.startGame(tokens[1], room.roomId) // 乙非房主
+    expect(r1.error).toBeDefined()
+  })
+
+  it('动作路由：非本座位出牌被拒并回 error 给发送者', () => {
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    const wrongSeat = room.game.currentSeat
+    const notTurnToken = tokens.find((t, i) => i !== wrongSeat)
+    const c = conn('路人')
+    room.members.find(m => m.token === notTurnToken).conn = c
+    const res = mgr.gameAction(notTurnToken, 'game.play', { tileIds: ['t1-1'], side: 'bottom' })
+    expect(res.error).toBeDefined()
+    expect(c.sent.some(m => m.type === 'error')).toBe(true)
+  })
+
+  it('掷骰由服务端编排：立即 rolling，1.2s 定骰，2.4s 后进 PLAYING', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    const rollerSeat = room.game.rollerSeat
+    const rollerToken = tokens[rollerSeat]
+    const c = room.members.find(m => m.token === rollerToken).conn
+    c.sent.length = 0
+    mgr.gameAction(rollerToken, 'game.roll', {})
+    expect(room.state).toBe('ROLLING')
+    expect(c.sent.some(m => m.type === 'game.state' && m.payload.fx.diceRolling === true)).toBe(true)
+    vi.advanceTimersByTime(1200)
+    expect(c.sent.some(m => m.type === 'game.state' && m.payload.fx.dice === room.game.pendingDice)).toBe(true)
+    vi.advanceTimersByTime(2400)
+    expect(room.state).toBe('PLAYING')
+    vi.useRealTimers()
+  })
+
+  // Task 3 实现 onDisconnect 后启用
+  it.skip('完整对局：全员掉线托管，可推进到 SETTLE', () => {
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    vi.useFakeTimers()
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    for (let i = 0; i < 2000 && room.game.state !== 'SETTLE'; i++) vi.advanceTimersByTime(100)
+    expect(room.game.state).toBe('SETTLE')
+    expect(room.game.result).toBeTruthy()
+    vi.useRealTimers()
   })
 })
