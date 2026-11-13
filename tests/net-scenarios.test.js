@@ -155,11 +155,10 @@ async function playToSettleByTakeover(tokens) {
 }
 
 describe('连续局推进（真实 IO）', () => {
-  it('结算后全员重连并 settleContinue → ROLLING 且掷骰者=上局赢家', async () => {
+  it('结算后全员重连并 settleContinue → 房间重置回 WAITING 且全员已准备', async () => {
     const { tokens } = await fullRoom()
     const room = await playToSettleByTakeover(tokens)
-    const winner = room.game.result.winner
-    // 全员重连（掉线成员未超 60s 宽限），确认后开下局
+    // 全员重连（掉线成员未超 60s 宽限），确认后回房间（WAITING）
     for (const t of tokens) {
       const c = client()
       await c.opened
@@ -168,19 +167,21 @@ describe('连续局推进（真实 IO）', () => {
       const ack = await c.request('game.settleContinue', {})
       expect(ack.type).toBe('action.ok')
     }
-    expect(room.game.state).toBe('ROLLING')
-    expect(room.game.rollerSeat).toBe(winner)
+    await until(() => room.game === null, 5000, '全员确认后重置回 WAITING')
+    expect(room.members.every((m) => m.ready)).toBe(true)
+    expect(room.members.every((m) => !m.isAI)).toBe(true)
   }, 70000)
 
-  it('结算后仅 1 人确认，5s 超时自动开下一局', async () => {
+  it('结算后仅 1 人确认，5s 超时自动重置回 WAITING', async () => {
     const { tokens } = await fullRoom()
     const room = await playToSettleByTakeover(tokens)
     const c = client()
     await c.opened
     await c.request('reconnect', { token: tokens[0] })
     await c.request('game.settleContinue', {})
-    expect(room.game.state).toBe('SETTLE') // 未齐，等超时
-    await until(() => room.game.state === 'ROLLING', 8000, '5s 超时开下局')
+    expect(room.game).not.toBe(null) // 未齐，等超时
+    await until(() => room.game === null, 8000, '5s 超时重置回 WAITING')
+    expect(room.members.every((m) => m.ready)).toBe(true)
   }, 70000)
 
   it('结算前 settleContinue 被拒 BAD_STATE；未知动作被路由层拒 UNKNOWN_TYPE', async () => {
@@ -232,7 +233,7 @@ describe('断线重连（真实 IO）', () => {
     expect(m.aiTimer).toBeNull()
   }, 30000)
 
-  it('结算中断线重连：能继续 settleContinue 开下局', async () => {
+  it('结算中断线重连：能继续 settleContinue 重置房间回 WAITING', async () => {
     const { tokens } = await fullRoom()
     const room = await playToSettleByTakeover(tokens)
     const c = client()
@@ -241,7 +242,7 @@ describe('断线重连（真实 IO）', () => {
     expect(re.type).toBe('reconnected')
     const ack = await c.request('game.settleContinue', {})
     expect(ack.type).toBe('action.ok')
-    expect(room.game.state).toBe('SETTLE') // 只 1 人确认，未超时仍在结算
+    expect(room.game).not.toBe(null) // 只 1 人确认，未超时仍在结算
   }, 70000)
 
   it('对局中主动退出（room.leave）：连接关闭走宽限+托管，宽限内凭 token 重连可回房', async () => {

@@ -121,11 +121,18 @@ describe('useNetGame', () => {
     expect(net.sent.filter((s) => s.type !== 'reconnect')).toHaveLength(0)
   })
 
-  it('game.over：result 写入 view，revealKept 置位', () => {
+  it('game.over：result 写入 view，终局 view 快照应用，revealKept 置位', () => {
     const net = fakeNet()
     const { view, fx } = useNetGame(net)
-    net.__push('game.over', { result: { winner: 2, ranks: [], scores: { 0: -1, 1: -2, 2: 6, 3: -3 } }, fx: { revealKept: true } })
+    net.__push('game.over', {
+      result: { winner: 2, ranks: [], scores: { 0: -1, 1: -2, 2: 6, 3: -3 } },
+      // 服务器 game.over 携带终局视图：终牌已在 tableHistory、state 翻 SETTLE
+      view: { state: 'SETTLE', currentSeat: 2, openEnds: { top: 4, bottom: 6 }, myHand: [], myKept: [], opponents: [], tableTile: null, leaderSeat: 2, rollerSeat: 2, result: null, tableHistory: [{ seat: 2, tiles: [{ id: 't9-1', name: '九', a: 9, b: 9 }], side: 'bottom', mirrored: false }] },
+      fx: { revealKept: true },
+    })
     expect(view.result.winner).toBe(2)
+    expect(view.state).toBe('SETTLE') // 终局视图被应用（终牌上链、state 翻转）
+    expect(view.tableHistory).toHaveLength(1) // 最后一张牌已在桌面
     expect(fx.revealKept).toBe(true)
   })
 

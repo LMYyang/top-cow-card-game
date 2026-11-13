@@ -3,6 +3,8 @@
   <view class="table" :class="{ revealing: fx.revealKept }" @click="onRevealTap">
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
+    <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
+    <button class="btn-home" @click.stop="confirmGoHome">‹ 主菜单</button>
     <!-- 对家（上）：座位按我的座位旋转——每人都看到自己在下方位，相对方位不变，头像颜色对应同一人 -->
     <view id="opp-top-anchor">
       <OpponentZone position="top" :seat="seatAt(2)" :label="labelOf(seatAt(2))" :hand-count="opponentBySeat(seatAt(2)).handCount" :kept-count="opponentBySeat(seatAt(2)).keptCount" :is-leader="view.leaderSeat === seatAt(2)" :last-move="lastMoveOf(seatAt(2))" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
@@ -34,7 +36,8 @@
         </template>
         <template v-else-if="view.state === 'SETTLE'">
           <TableTimeline :history="view.tableHistory" />
-          <view class="settle-brief">本局结束</view>
+          <!-- 终局节奏：终牌落定先显示本局结束，停顿后亮牌（settleBrief 由客户端编排，两模式一致） -->
+          <view v-if="settleBrief" class="settle-brief">本局结束</view>
         </template>
       </CenterArea>
 
@@ -64,8 +67,9 @@
         @confirm-play="onConfirmPlay"
         @confirm-discard="onConfirmDiscard"
       >
-        <!-- 亮牌阶段提示：位于"本局结束"与我的头像之间，等待玩家点击任意处继续 -->
-        <view v-if="fx.revealKept && !fx.settleShow" class="tap-hint">点击屏幕任意处继续</view>
+        <!-- 亮牌阶段提示：位于"本局结束"与我的头像之间，等待玩家点击任意处继续；
+             终局最后一飞未落地时先不提示（点击也被 onRevealTap 拦下） -->
+        <view v-if="fx.revealKept && !fx.settleShow && flyLanded" class="tap-hint">点击屏幕任意处继续</view>
       </HandArea>
     </view>
 
@@ -93,6 +97,18 @@
         </view>
       </view>
     </view>
+
+    <!-- 返回主菜单确认弹窗：自绘深木色卡片（uni.showModal 样式无法定制，与结算/提醒弹窗同风格） -->
+    <view v-if="homeConfirmShow" class="settle-overlay" @click="homeConfirmShow = false">
+      <view class="settle-card home-confirm-card" @click.stop>
+        <text class="settle-title">返回主菜单</text>
+        <text class="home-confirm-text">{{ homeConfirmText }}</text>
+        <view class="settle-actions">
+          <button class="btn-primary" @click="goHome">退出</button>
+          <button class="btn-secondary" @click="homeConfirmShow = false">继续玩</button>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -108,6 +124,7 @@ import PlayerAvatar from '../../components/PlayerAvatar.vue'
 import { placeSides, diceToSeatOffset } from '../../core/rules.js'
 import { useGame } from '../../composables/useGame.js'
 import { useNetGame } from '../../composables/useNetGame.js'
+import { sharedNet } from '../../utils/net.js'
 
 /**
  * 双模式接入：solo（单机 AI）与 net（联网对战）。
@@ -127,8 +144,7 @@ function emptyView() {
 }
 function emptyFx() {
   return { dice: null, diceRolling: false, settleShow: false, revealKept: false, lastMove: null }
-}
-const unwrap = (v, fallback) => (isRef(v) ? v.value : v) ?? fallback
+}const unwrap = (v, fallback) => (isRef(v) ? v.value : v) ?? fallback
 const view = computed(() => unwrap(gameApi.value?.view, emptyView()))
 const fx = computed(() => unwrap(gameApi.value?.fx, emptyFx()))
 const myTurn = computed(() => unwrap(gameApi.value?.myTurn, false))
@@ -139,6 +155,21 @@ const diceRollerSeat = computed(() => unwrap(gameApi.value?.diceRollerSeat, 0))
 const mySeatVal = computed(() => unwrap(gameApi.value?.mySeat, 0))
 // 连接状态（net）：非 open 时顶部显示断线重连条；solo 无此概念，恒 open
 const connection = computed(() => unwrap(gameApi.value?.connection, 'open'))
+
+// 结算后回房间：服务器把全员确认（或超时）的 SETTLE 房重置回 WAITING 并广播 room.state。
+// 牌桌页订阅这条推送，收到即整页跳回房间（redirectTo 清掉本页，避免 H5 历史栈残留旧局）。
+// 订阅直接在 setup 里注册（isNet 已由 onLoad 先行置位；uni-app H5 中 onLoad 在组件 setup
+// 阶段即触发，早于本行执行），避免依赖 onMounted——等待 onMounted 期间到达的推送会丢失。
+let offRoomState = null
+if (isNet.value) {
+  const n = sharedNet()
+  offRoomState = n.on('room.state', ({ room }) => {
+    if (!room || room.state !== 'WAITING') return
+    fx.value.settleShow = false
+    uni.redirectTo({ url: `/pages/room/room?roomId=${room.roomId}` })
+  })
+  onUnmounted(() => offRoomState?.())
+}
 
 const selectedId = ref(null)
 const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下端
@@ -182,7 +213,7 @@ const leaderRevealed = ref(false)
 let diceFaceTimer = null
 let revealTimer = null
 // 连续局复位：beginRound 每局都重设 rollerSeat，以它为锚清掉上一局残留的
-// 揭示文案/回弹/旧骰面。若不复位，第二局 ROLLING 时 leaderRevealed 残留 true，
+// 揭示文案/回弹/旧骰面/终局节奏。若不复位，第二局 ROLLING 时 leaderRevealed 残留 true，
 // 模板 v-if 揭示文案顶掉 v-else-if 掷骰按钮，掷骰者点不到按钮全场卡死
 // （solo 走 redirectTo 整页重建从未暴露；net 同页连续局必现）。
 // fx.dice 由 game.state 推送整体覆盖（beginRound 推 dice:null），此处无需手动清。
@@ -193,6 +224,12 @@ watch(
     diceLanded.value = false
     leaderRevealed.value = false
     randomFace.value = 1 + Math.floor(Math.random() * 6)
+    // 终局节奏状态复位：否则下一局进入 ROLLING 时 settleBrief/revealKept 残留 true，
+    // 骰子按钮被终局残留文案顶掉，连续局掷骰者看不到按钮全场卡死
+    settleBrief.value = false
+    fx.value.revealKept = false
+    fx.value.settleShow = false
+    fx.value.lastMove = null
   }
 )
 const diceResultText = computed(() => {
@@ -206,9 +243,10 @@ function clearTimers() {
   if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
   if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
 }
-/** 亮牌阶段（结算弹窗前）：点击屏幕任意位置 → 弹出结算（settleShow 由客户端本地点亮，两模式一致） */
+/** 亮牌阶段（结算弹窗前）：点击屏幕任意位置 → 弹出结算（settleShow 由客户端本地点亮，两模式一致）。
+ *  终局最后一飞未落地时拦下点击：先看清最后一张牌落桌，再进结算 */
 function onRevealTap() {
-  if (fx.value.revealKept && !fx.value.settleShow && view.value.result) {
+  if (fx.value.revealKept && !fx.value.settleShow && view.value.result && flyLanded.value) {
     fx.value.settleShow = true // fx 是 reactive 对象（computed 仅包引用），原地赋值两模式均生效
   }
 }
@@ -311,7 +349,14 @@ function onConfirmDiscard() {
 const fly = reactive({ tile: null, mirrored: false, fromX: 0, fromY: 0, toX: 0, toY: 0, moving: false })
 // 飞行中隐藏链上真牌（传给 TableTimeline 控制最新条目可见性）
 const latestHidden = ref(false)
+// 终局最后一飞：落地前压住亮牌/结算（fx.revealKept / settleShow 可能随 game.over/状态翻转先行置位），
+// 落地后统一放行——最后一张牌先看清落桌，再进亮牌阶段
 let flyTimer = null
+const flyLanded = ref(true)
+// 终局节奏（客户端统一编排，solo/net 一致）：
+// 终牌落定 → settleBrief=true 显示「本局结束」 → 停 1s → revealKept=true 集体亮扣牌 → 点击 → 结算弹窗
+const settleBrief = ref(false)
+let settlePaceTimer = null
 
 /** 屏幕坐标（px）：元素或其内部第一个有尺寸的后代的中心。
  *  锚点层 display:contents 自身 getBoundingClientRect 全 0，须穿透到内部真实渲染元素 */
@@ -391,6 +436,7 @@ function playFly(entry) {
   fly.fromX = f.from.x
   fly.fromY = f.from.y
   fly.moving = false
+  flyLanded.value = false // 起飞：终局场景下压住亮牌/结算直到落地
   latestHidden.value = true // 飞行期间隐藏链上真牌，落地瞬间显现
   // 双 rAF：起点样式已渲染且 Vue 已把新 entry 渲染进 DOM（#latest-entry-anchor 指向新牌），
   // 此时才解析终点并切到过渡态（watch 触发瞬间锚点还是旧牌，立即取会差一位）
@@ -409,24 +455,53 @@ function playFly(entry) {
     })
   })
   // 动画完成：隐藏克隆、显现真牌（真牌恰在此位置，视觉无缝衔接），0.95s > 0.9s 过渡避免闪断
-  flyTimer = setTimeout(() => { fly.tile = null; fly.moving = false; latestHidden.value = false }, 950)
+  flyTimer = setTimeout(() => {
+    fly.tile = null
+    fly.moving = false
+    latestHidden.value = false
+    flyLanded.value = true // 落地：放行终局亮牌/结算
+  }, 950)
 }
 onUnmounted(() => clearTimeout(flyTimer))
+onUnmounted(() => clearTimeout(settlePaceTimer))
 
-/** 监听桌面历史：出现新出牌条目即起飞克隆牌（扣牌条目不飞）。solo 与 net 共用（数据源都是 tableHistory） */
+/** 终局节奏编排（solo/net 一致，终牌落地后触发）：
+ *  显示「本局结束」 → 停 1s → revealKept=true 集体亮出所有人扣的牌 → 等点击 → 结算弹窗 */
+function paceSettle() {
+  clearTimeout(settlePaceTimer)
+  settleBrief.value = true
+  settlePaceTimer = setTimeout(() => { fx.value.revealKept = true }, 1000)
+}
+
+/** 监听桌面历史：出现新出牌条目即起飞克隆牌（扣牌条目不飞）。solo 与 net 共用（数据源都是 tableHistory）。
+ *  终局条目（state 已翻 SETTLE）也要飞：最后一张牌先落桌、落地后再进入亮牌/结算，
+ *  否则牌还在手里游戏就结束了（终局时 latestId 的金圈/链端徽章等随 SETTLE 模板一并渲染，不受影响） */
 watch(
   () => view.value.tableHistory.length,
   (n, old) => {
     if (!n || (old !== undefined && n <= old)) return
     const entry = view.value.tableHistory[n - 1]
-    if (entry?.tiles && view.value.state !== 'SETTLE') playFly(entry)
+    if (entry?.tiles) playFly(entry)
   }
+)
+
+/** 终局落地门：终牌飞完（或本无飞牌）且还没编排过节奏时，触发「本局结束→停顿→亮牌」。
+ *  revealKept 来自服务器推送/solo core 已置位时由 flyLanded 压制显示，落地后此处统一放行；
+ *  连续局 state 回 ROLLING 时先清 settleBrief（见 rollerSeat 复位 watch），下局终局可重新编排 */
+watch(
+  () => [view.value.state, flyLanded.value],
+  ([state, landed]) => {
+    if (state === 'SETTLE' && landed && view.value.result && !settleBrief.value && !fx.value.revealKept) {
+      paceSettle()
+    }
+  },
+  { immediate: true }
 )
 
 async function restart() {
   if (isNet.value) {
-    // 联网局：服务器驱动下一局（settleContinue → 全员确认/超时后 beginRound 推送），
-    // 本地不写 storage、不重定向，仅收起结算弹窗等待服务器推送新局。
+    // 联网局：发 settleContinue 后收起弹窗等服务器；全员确认（或 5s 超时）后服务器把房间
+    // 重置回 WAITING 并广播 room.state，本页的 roomState watch 会统一跳回房间页。
     await gameApi.value?.restart()
     fx.value.settleShow = false
     return
@@ -451,6 +526,17 @@ async function goHome() {
   // navigateBack 会退回栈里前一个 game 实例（看起来像"又跳回游戏"）。reLaunch 清空页面栈直达主菜单。
   uni.reLaunch({ url: '/pages/index/index' })
 }
+/** 牌桌页右上角返回：对局进行中先弹确认（防误触掉线弃局），结算弹窗内已有「回主菜单」不再叠加 */
+const homeConfirmShow = ref(false)
+const homeConfirmText = ref('')
+function confirmGoHome() {
+  const inPlay = view.value.state === 'ROLLING' || view.value.state === 'PLAYING' || (view.value.state === 'SETTLE' && !fx.value.settleShow)
+  if (!inPlay) return goHome()
+  homeConfirmText.value = isNet.value
+    ? '对局尚未结束，返回后你的座位将由 AI 托管（60 秒内可从大厅重连回房）'
+    : '对局尚未结束，确定要退出吗？'
+  homeConfirmShow.value = true
+}
 </script>
 
 <style scoped>
@@ -473,6 +559,13 @@ async function goHome() {
   position: fixed; top: 0; left: 0; right: 0;
   background: #a04030; color: #fff; font-size: 24rpx;
   text-align: center; padding: 8rpx 0; z-index: 999;
+}
+/* 右上角返回主菜单小按钮：不参与布局（fixed），不遮牌面 */
+.btn-home {
+  position: fixed; top: 16rpx; right: 16rpx; z-index: 50;
+  font-size: 24rpx; line-height: 1.4; padding: 10rpx 22rpx; margin: 0;
+  background: rgba(58, 44, 20, 0.85); color: #b0a685;
+  border: 2rpx solid #5a4a32; border-radius: 999rpx;
 }
 /* 局末亮牌阶段：各区扣牌翻开后行数变多、整体变高，取消 flex 压缩让内容自然撑高，
    防止窄视口下对手区亮出的牌面底部被裁（页面可自然向下延展） */
@@ -546,6 +639,8 @@ async function goHome() {
 .settle-player { display: flex; align-items: center; gap: 12rpx; }
 .settle-row .score { font-weight: bold; }
 .settle-actions { display: flex; flex-direction: column; gap: 16rpx; margin-top: 12rpx; }
+.home-confirm-card { width: 560rpx; gap: 28rpx; }
+.home-confirm-text { font-size: 28rpx; color: #f5f0e1; text-align: center; line-height: 1.6; }
 
 /* 飞牌动画层：fixed 克隆牌，从出牌方头像飞向桌面中心；pointer-events 穿透不挡操作 */
 .fly-layer {

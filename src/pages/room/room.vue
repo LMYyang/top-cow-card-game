@@ -3,29 +3,57 @@
   <view class="room">
     <view class="head">
       <text class="room-id">房间号 {{ roomId }}</text>
-      <text class="hint">开局时空位自动补 AI 代打，人不够也能玩</text>
+      <text class="hint">房主免准备可随时开局，其余玩家需点准备，空位自动补 AI 代打</text>
     </view>
     <view class="seats">
       <view
         v-for="seat in [0, 1, 2, 3]"
         :key="seat"
         class="seat"
-        :class="{ me: seat === mySeat, taken: !!memberOf(seat) }"
+        :class="{ me: seat === mySeat, taken: !!memberOf(seat), host: memberOf(seat)?.isHost }"
         @click="tapSeat(seat)"
       >
-        <text class="seat-no">{{ seatName(seat) }}</text>
-        <text class="seat-name">{{ memberOf(seat)?.name || '空位' }}</text>
-        <text v-if="memberOf(seat)" class="seat-status">
-          {{ memberOf(seat).isHost ? '房主 · ' : '' }}{{ memberOf(seat).isAI ? 'AI 代打' : seatReadyText(memberOf(seat)) }}{{ memberOf(seat).connected ? '' : ' · 掉线' }}
-        </text>
-        <text v-else class="seat-status">点击入座</text>
+        <text class="seat-no">{{ seat + 1 }}号位</text>
+        <!-- 右上角同一位置互斥显示：房主座位显示「✦ 房主」，其余真人座位在房主视角下显示「移出」 -->
+        <view v-if="memberOf(seat)?.isHost" class="host-badge">
+          <text class="host-badge-star">✦</text>
+          <text class="host-badge-text">房主</text>
+        </view>
+        <text
+          v-else-if="isHost && memberOf(seat) && !memberOf(seat).isAI"
+          class="seat-kick"
+          @click.stop="kick(memberOf(seat))"
+        >移出</text>
+        <view class="seat-name-row">
+          <text class="seat-name">{{ memberOf(seat)?.name || '空位' }}</text>
+        </view>
+        <view v-if="memberOf(seat)" class="seat-status-row">
+          <text class="seat-status">
+            {{ memberOf(seat).isAI ? 'AI 代打' : seatReadyText(memberOf(seat)) }}{{ memberOf(seat).connected ? '' : ' · 掉线' }}
+          </text>
+          <!-- 房主视角：未准备真人座位右侧同行「提醒准备」按钮；被提醒方收 poke 推送弹窗 -->
+          <text
+            v-if="isHost && !memberOf(seat).isAI && !memberOf(seat).ready && memberOf(seat).connected"
+            class="seat-poke"
+            @click.stop="poke(memberOf(seat))"
+          >提醒准备</text>
+        </view>
+        <text v-if="!memberOf(seat)" class="seat-status">点击入座</text>
       </view>
     </view>
     <view class="actions">
-      <button v-if="isHost" class="btn-primary" :disabled="!canStart" @click="start">{{ startHint }}</button>
-      <button v-if="myMember && !myMember.ready" class="btn-secondary" @click="setReady(true)">准备</button>
-      <button v-else-if="myMember" class="btn-secondary" @click="setReady(false)">取消准备</button>
+      <button v-if="isHost" class="btn-primary start-btn" :disabled="!canStart" @click="start">{{ startHint }}</button>
+      <button v-if="myMember && !isHost && !myMember.ready" class="btn-secondary" @click="setReady(true)">准备</button>
+      <button v-else-if="myMember && !isHost && myMember.ready" class="btn-secondary" @click="setReady(false)">取消准备</button>
       <button class="btn-leave" @click="leave">离开房间</button>
+    </view>
+    <!-- 房主提醒弹窗：自绘遮罩卡片，与结算弹窗同风格（深木色卡片 + 金色标题），uni.showModal 样式无法定制 -->
+    <view v-if="pokeShow" class="poke-overlay" @click="pokeShow = false">
+      <view class="poke-card" @click.stop>
+        <text class="poke-title">✦ 提醒 ✦</text>
+        <text class="poke-text">{{ pokeMessage }}</text>
+        <button class="btn-primary poke-btn" @click="pokeShow = false">知道了</button>
+      </view>
     </view>
   </view>
 </template>
@@ -40,12 +68,26 @@ const roomId = ref(null)
 const room = ref(null)
 // mySeat 以 reconnect 快照（yourSeat）与换座回执为准：room.state 推送不携带 token，无法自行定位
 const mySeat = ref(null)
-const SEAT_NAMES = ['自己', '下家', '对家', '上家']
 
 const redirected = ref(false) // game.state 只跳一次：重连握手等场景服务器可能重发开局推送
 const offRoom = net.on('room.state', ({ room: r }) => {
   room.value = r
   roomId.value = r.roomId
+  // 结算回房再开局：本页可能复用实例（H5 redirectTo 后 uni-app 页面栈复用），重置开局跳转闸门
+  if (r.state === 'WAITING') redirected.value = false
+})
+// 被房主移出：清 token 回大厅（token 已被服务器删除，留着只会误导重连）
+const offKicked = net.on('kicked', () => {
+  uni.removeStorageSync('dingniuzi_player_token')
+  uni.showToast({ title: '你已被房主移出房间', icon: 'none' })
+  uni.reLaunch({ url: '/pages/lobby/lobby' })
+})
+// 房主提醒准备：自绘弹窗（与结算弹窗同风格），点遮罩或按钮关闭
+const pokeShow = ref(false)
+const pokeMessage = ref('')
+const offPoke = net.on('poke', ({ message }) => {
+  pokeMessage.value = message || '房主提醒你准备'
+  pokeShow.value = true
 })
 const offStart = net.on('game.state', () => {
   if (redirected.value) return
@@ -65,13 +107,12 @@ const canStart = computed(() => {
 })
 const startHint = computed(() => {
   if (canStart.value) return '开始游戏'
-  // 开局时空位自动补 AI：提示里说明缺的人由 AI 托底，房主可提前开局
-  const real = room.value ? room.value.members.filter((m) => !m.isAI).length : 0
-  const ready = room.value ? room.value.members.filter((m) => m.ready || m.isAI).length : 0
-  if (ready < real) return `还差 ${real - ready} 人准备（空位由 AI 补齐）`
-  return '可开始（空位由 AI 补齐）'
+  // 房主免准备、其余真人需手动准备：差人数 = 未准备的真人数
+  const real = room.value ? room.value.members.filter((m) => !m.isAI) : []
+  const unready = real.filter((m) => !m.ready).length
+  if (unready > 0) return `还差${unready}人准备·空位AI补齐`
+  return '可开始·空位AI补齐'
 })
-const seatName = (seat) => `${seat + 1}号位 · ${SEAT_NAMES[seat]}`
 const seatReadyText = (m) => (m.isAI ? '' : m.ready ? '已准备' : '未准备')
 
 async function tapSeat(seat) {
@@ -89,6 +130,23 @@ async function setReady(ready) {
   try {
     const res = await net.request('room.ready', { ready })
     if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+  } catch (e) {
+    uni.showToast({ title: e.message || '请求失败', icon: 'none' })
+  }
+}
+async function kick(member) {
+  try {
+    const res = await net.request('room.kick', { token: member.token })
+    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+  } catch (e) {
+    uni.showToast({ title: e.message || '请求失败', icon: 'none' })
+  }
+}
+async function poke(member) {
+  try {
+    const res = await net.request('room.poke', { token: member.token })
+    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+    else uni.showToast({ title: '已提醒', icon: 'none' })
   } catch (e) {
     uni.showToast({ title: e.message || '请求失败', icon: 'none' })
   }
@@ -150,7 +208,7 @@ watch(net.status, async (val, old) => {
   if (val !== 'open' || old !== 'reconnecting') return
   await restoreSession()
 })
-onUnmounted(() => { offRoom?.(); offStart?.() })
+onUnmounted(() => { offRoom?.(); offStart?.(); offKicked?.(); offPoke?.() })
 </script>
 
 <style scoped>
@@ -159,12 +217,29 @@ onUnmounted(() => { offRoom?.(); offStart?.() })
 .room-id { font-size: 56rpx; font-weight: bold; color: #c9a227; letter-spacing: 8rpx; }
 .hint { font-size: 24rpx; color: #b0a685; }
 .seats { display: flex; flex-wrap: wrap; gap: 20rpx; justify-content: center; }
-.seat { width: 300rpx; padding: 28rpx 24rpx; border-radius: 16rpx; background: rgba(58, 44, 20, 0.5); border: 2rpx solid #5a4a32; display: flex; flex-direction: column; gap: 8rpx; }
+.seat { position: relative; width: 300rpx; padding: 28rpx 24rpx; border-radius: 16rpx; background: rgba(58, 44, 20, 0.5); border: 2rpx solid #5a4a32; display: flex; flex-direction: column; gap: 8rpx; }
 .seat.me { border-color: #c9a227; }
+.seat.host { border-color: #c9a227; border-width: 4rpx; background: linear-gradient(160deg, rgba(120, 88, 26, 0.55), rgba(58, 44, 20, 0.5)); box-shadow: 0 0 16rpx rgba(201, 162, 39, 0.35); }
+.seat.host .seat-name { color: #c9a227; }
 .seat.taken { background: rgba(74, 52, 24, 0.7); }
+.seat.host.taken { background: linear-gradient(160deg, rgba(120, 88, 26, 0.55), rgba(58, 44, 20, 0.5)); }
 .seat-no { font-size: 22rpx; color: #b0a685; }
 .seat-name { font-size: 32rpx; color: #f5f0e1; }
+.seat-name-row { display: flex; align-items: center; min-width: 0; padding-right: 100rpx; }
+.seat-name-row .seat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-badge { position: absolute; top: 12rpx; right: 12rpx; display: flex; align-items: center; gap: 4rpx; padding: 2rpx 12rpx; border: 2rpx solid #c9a227; border-radius: 999rpx; background: rgba(201, 162, 39, 0.14); }
+.host-badge-star { font-size: 20rpx; color: #c9a227; line-height: 1; }
+.host-badge-text { font-size: 20rpx; color: #c9a227; line-height: 1.4; }
 .seat-status { font-size: 22rpx; color: #b0a685; }
-.actions { display: flex; flex-direction: column; gap: 20rpx; width: 100%; max-width: 560rpx; margin-top: 20rpx; }
+.seat-kick { position: absolute; top: 12rpx; right: 12rpx; font-size: 22rpx; color: #c0563a; padding: 4rpx 8rpx; }
+.seat-status-row { display: flex; align-items: center; gap: 12rpx; }
+.seat-poke { margin-left: auto; font-size: 22rpx; color: #c9a227; padding: 2rpx 12rpx; border: 2rpx solid #c9a227; border-radius: 999rpx; flex: none; }
+.actions { display: flex; flex-direction: column; align-items: center; gap: 20rpx; width: 100%; max-width: 560rpx; margin-top: 20rpx; }
+.start-btn { width: auto; min-width: 0; padding: 18rpx 64rpx; font-size: 32rpx; white-space: nowrap; line-height: 1.4; }
 .btn-leave { background: transparent; color: #b0a685; border: 2rpx solid #5a4a32; }
+.poke-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 99; }
+.poke-card { background: rgba(74, 52, 24, 0.88); border-radius: 24rpx; padding: 48rpx 40rpx; width: 560rpx; display: flex; flex-direction: column; gap: 24rpx; align-items: center; box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.5); border: 2rpx solid #5a4a32; }
+.poke-title { font-size: 36rpx; font-weight: bold; color: #c9a227; letter-spacing: 4rpx; }
+.poke-text { font-size: 30rpx; color: #f5f0e1; text-align: center; }
+.poke-btn { width: auto; padding: 14rpx 56rpx; }
 </style>

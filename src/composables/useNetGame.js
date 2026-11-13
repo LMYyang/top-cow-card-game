@@ -32,7 +32,11 @@ export function useNetGame(net = sharedNet()) {
     if (yourSeat !== undefined) mySeat.value = yourSeat
     if (n) Object.assign(names, n)
   })
-  const offOver = net.on('game.over', ({ result, fx: f }) => {
+  const offOver = net.on('game.over', ({ result, view: v, fx: f }) => {
+    // 终局推送的 view 必须应用：gameAction 的 play 让终局牌进 tableHistory 后状态即翻 SETTLE，
+    // 服务器在 afterAction 里改发 game.over（带终局快照）。若丢弃 view，最后一张牌不上链、
+    // 界面直接跳结算；且 view.state 仍是 PLAYING 而 fx 已亮牌，界面处于矛盾状态。
+    if (v) Object.keys(v).forEach((k) => { view[k] = v[k] })
     view.result = result
     Object.assign(fx, { dice: null, diceRolling: false }, f)
   })

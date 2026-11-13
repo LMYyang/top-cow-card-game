@@ -33,10 +33,10 @@ describe('RoomManager 房间流程', () => {
     expect(room.roomId).toBeLessThanOrEqual(999999)
     expect(token).toBeTruthy()
     expect(room.members).toHaveLength(1)
-    expect(room.members[0]).toMatchObject({ seat: 0, name: '甲', isHost: true, connected: true, ready: false })
+    expect(room.members[0]).toMatchObject({ seat: 0, name: '甲', isHost: true, connected: true, ready: true }) // 房主免准备
   })
 
-  it('按房间号加入：空位自动分配座位', () => {
+  it('按房间号加入：空位自动分配座位，非房主未准备', () => {
     const c1 = conn('甲')
     const { room, token: t1 } = mgr.createRoom(c1, '甲')
     const c2 = conn('乙')
@@ -45,6 +45,7 @@ describe('RoomManager 房间流程', () => {
     expect(res.room.members).toHaveLength(2)
     expect(res.room.members.map(m => m.seat).sort()).toEqual([0, 1])
     expect(res.token).not.toBe(t1)
+    expect(res.room.members.find(m => m.token === res.token).ready).toBe(false) // 非房主需手动准备
   })
 
   it('加入满员房间被拒', () => {
@@ -100,23 +101,101 @@ describe('RoomManager 房间流程', () => {
     expect(c2.sent.some(m => m.type === 'room.state')).toBe(true)
   })
 
-  it('token 唯一且非空；同一 conn 重复 createRoom 自动离开旧房', () => {
+  it('token 唯一且非空；不同 conn 各自建房', () => {
     const r1 = mgr.createRoom(conn('甲'), '甲')
     const r2 = mgr.createRoom(conn('乙'), '乙')
     expect(r1.token).toBeTruthy()
     expect(r2.token).toBeTruthy()
     expect(r1.token).not.toBe(r2.token)
-    // 同一 conn 重复创建：旧房销毁（仅他一人），新房创建成功
+  })
+
+  it('房主踢人：WAITING 可踢、被踢方收 kicked 推送且 token 失效；非房主/踢自己/对局中被拒', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    const j = mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    // 非房主踢人被拒
+    expect(mgr.kickMember(j.token, room.roomId, token).error).toMatchObject({ code: 'NOT_HOST' })
+    // 踢自己被拒
+    expect(mgr.kickMember(token, room.roomId, token).error).toMatchObject({ code: 'BAD_REQUEST' })
+    // 踢不存在的人被拒
+    expect(mgr.kickMember(token, room.roomId, 'no-such-token').error).toMatchObject({ code: 'NOT_IN_ROOM' })
+    // 正常踢人：乙收到 kicked 推送、移出房间、token 失效
+    const c2 = room.members.find(m => m.token === j.token).conn
+    c1.sent.length = 0
+    const res = mgr.kickMember(token, room.roomId, j.token)
+    expect(res.error).toBeUndefined()
+    expect(room.members.map(m => m.name)).toEqual(['甲'])
+    expect(mgr.tokens.has(j.token)).toBe(false)
+    expect(c2.sent.some(m => m.type === 'kicked')).toBe(true)
+    expect(c1.sent.some(m => m.type === 'room.state')).toBe(true) // 其余人收到更新
+    // 对局中踢人被拒
+    room.game = { state: 'PLAYING' }
+    const r2 = mgr.joinRoom(conn('丙'), '丙', room.roomId)
+    expect(r2.error).toMatchObject({ code: 'ROOM_STARTED' })
+    room.game = null // 还原 WAITING 再验证一次路由层拒绝（用对局房场景）
+    room.game = { state: 'PLAYING' }
+    const j2 = { token: 'fake' }
+    room.members.push({ seat: 1, token: j2.token, name: '丙', connected: false, gone: false, ready: false, isHost: false, isAI: false, conn: null, graceTimer: null, aiTimer: null })
+    expect(mgr.kickMember(token, room.roomId, j2.token).error).toMatchObject({ code: 'ROOM_STARTED' })
+    room.members = room.members.filter(m => m.token !== j2.token)
+    room.game = null
+  })
+
+  it('房主提醒准备：未准备真人收 poke 推送；已准备/自己/AI/非房主被拒', () => {
+    const { room, token } = mgr.createRoom(conn('甲'), '甲')
+    const j = mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    // 非房主提醒被拒
+    expect(mgr.pokeMember(j.token, room.roomId, token).error).toMatchObject({ code: 'NOT_HOST' })
+    // 提醒自己被拒
+    expect(mgr.pokeMember(token, room.roomId, token).error).toMatchObject({ code: 'BAD_REQUEST' })
+    // 正常提醒：乙收到 poke 推送
+    const c2 = room.members.find(m => m.token === j.token).conn
+    const res = mgr.pokeMember(token, room.roomId, j.token)
+    expect(res.error).toBeUndefined()
+    expect(c2.sent.some(m => m.type === 'poke')).toBe(true)
+    // 已准备后再提醒被拒
+    mgr.setReady(j.token, room.roomId, true)
+    expect(mgr.pokeMember(token, room.roomId, j.token).error).toMatchObject({ code: 'ALREADY_READY' })
+    // 对 AI 提醒被拒（fillWithAI 造一个 AI 成员）
+    room.members.push({ seat: 2, token: null, name: 'AI', connected: true, gone: false, ready: true, isHost: false, isAI: true, conn: null, graceTimer: null, aiTimer: null })
+    const ai = room.members.find(m => m.isAI)
+    expect(mgr.pokeMember(token, room.roomId, ai.token).error).toMatchObject({ code: 'BAD_REQUEST' })
+    room.members = room.members.filter(m => m !== ai)
+  })
+
+  it('checkSession：WAITING/对局中均返回房号与状态；token 失效返回 null（只读预检不改状态）', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    // WAITING 房：可预检到
+    expect(mgr.checkSession(token)).toMatchObject({ roomId: room.roomId, state: 'WAITING' })
+    // 对局房：宽限期内仍可预检到
+    room.game = { state: 'PLAYING' }
+    expect(mgr.checkSession(token)).toMatchObject({ roomId: room.roomId, state: 'PLAYING' })
+    expect(room.members.find(m => m.token === token).connected).toBe(true) // 未改变连接状态
+    // token 失效：null
+    expect(mgr.checkSession('no-such-token')).toBeNull()
+    mgr.onDisconnect(token) // 对局中掉线（宽限期内）
+    expect(mgr.checkSession(token)).toMatchObject({ roomId: room.roomId, state: 'PLAYING' }) // 宽限期内仍可恢复
+    // 宽限超时 → gone（fake timers 需先于 onDisconnect 安装才能拦截 graceTimer 的 setTimeout）
+    vi.useFakeTimers()
+    mgr.onDisconnect(token)
+    vi.advanceTimersByTime(60_000)
+    vi.useRealTimers()
+    expect(mgr.checkSession(token)).toBeNull()
+  })
+
+  it('一人一房：已有 WAITING 房再点创建回到老房间（不另开新屋），昵称同步更新', () => {
     const c = conn('丙')
     const first = mgr.createRoom(c, '丙').room
     expect(mgr.rooms.has(first.roomId)).toBe(true)
-    const second = mgr.createRoom(c, '丙')
+    const second = mgr.createRoom(c, '小丙')
     expect(second.error).toBeUndefined()
-    expect(second.token).toBeTruthy()
-    expect(mgr.rooms.has(first.roomId)).toBe(false) // 旧房已销毁
-    expect(mgr.rooms.has(second.room.roomId)).toBe(true)
+    expect(second.room.roomId).toBe(first.roomId) // 回老房
+    expect(second.token).toBe(first.members[0].token) // token 不变
+    expect(second.rejoined).toBe(true)
     expect(second.room.members).toHaveLength(1)
-    expect(second.room.members[0]).toMatchObject({ name: '丙', isHost: true })
+    expect(second.room.members[0]).toMatchObject({ name: '小丙', isHost: true }) // 昵称已更新
+    expect(mgr.rooms.size).toBe(1) // 没有另开新屋
   })
 
   it('同一 conn 重复 joinRoom：自动离开旧房（旧房销毁）后加入新房', () => {
@@ -139,15 +218,15 @@ describe('RoomManager 房间流程', () => {
     }
   })
 
-  it('roomState 快照剥离敏感字段（token/conn/graceTimer/aiTimer）', () => {
+  it('roomState 快照剥离敏感字段（conn/graceTimer/aiTimer）；token 保留供房主踢人定位目标', () => {
     const { room } = mgr.createRoom(conn('甲'), '甲')
     const snapshot = mgr.roomState(room)
     const m0 = snapshot.members[0]
-    expect(m0).not.toHaveProperty('token')
     expect(m0).not.toHaveProperty('conn')
     expect(m0).not.toHaveProperty('graceTimer')
     expect(m0).not.toHaveProperty('aiTimer')
     expect(m0).toMatchObject({ seat: 0, name: '甲', isHost: true, gone: false })
+    expect(m0.token).toBeTruthy()
   })
 
   it('setReady 对局中被拒（ROOM_STARTED）', () => {
@@ -187,9 +266,9 @@ describe('开始对局与动作路由', () => {
     mgr.joinRoom(conn('乙'), '乙', room.roomId)
     expect(room.members.length).toBe(2) // 两个真人
     vi.useFakeTimers()
-    const res = mgr.startGame(token, room.roomId) // 房主未准备也先别准备，直接测补位+准备校验
-    expect(res.error).toMatchObject({ code: 'CANNOT_START' }) // 真人未准备时仍拒绝
-    mgr.setReady(token, room.roomId, true)
+    // 非房主（乙）未准备时开局被拒：房主免准备但其余真人须手动准备
+    const res = mgr.startGame(token, room.roomId)
+    expect(res.error).toMatchObject({ code: 'CANNOT_START' })
     const r2 = room.members.find(m => m.name === '乙')
     mgr.setReady(r2.token, room.roomId, true)
     const res2 = mgr.startGame(token, room.roomId)
@@ -381,34 +460,65 @@ describe('断线重连与结算', () => {
     vi.useRealTimers()
   })
 
-  it('WAITING 阶段房主离开：成员移除并转移房主', () => {
+  it('WAITING 阶段房主离开：成员移除并转移房主（继任默认已准备）', () => {
     const { room, tokens } = fullRoom()
     // 甲（房主）主动离开 → WAITING 阶段成员移除、房主转移
     const res = mgr.leave(tokens[0])
     expect(res.ok).toBe(true)
     const next = room.members.find(m => !m.gone)
     expect(next.isHost).toBe(true)
+    expect(next.ready).toBe(true) // 继任房主免准备
     expect(mgr.tokens.has(tokens[0])).toBe(false)
   })
 
-  it('settleContinue：全员确认后开下一局，掷骰者=上局赢家', () => {
+  it('WAITING 阶段成员掉线：立即移除（不等宽限），最后一人掉线房间销毁', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    const joined = mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    // 乙掉线 → 立即移出房间
+    mgr.onDisconnect(joined.token)
+    expect(room.members.map(m => m.name)).toEqual(['甲'])
+    expect(mgr.tokens.has(joined.token)).toBe(false)
+    // 甲掉线（最后一员）→ 空房立即销毁
+    mgr.onDisconnect(token)
+    expect(mgr.rooms.has(room.roomId)).toBe(false)
+    expect(mgr.tokens.has(token)).toBe(false)
+  })
+
+  it('settleContinue：全员确认后重置回 WAITING 房（真人默认已准备，延迟广播回房推送），由房主再开新局', () => {
     vi.useFakeTimers()
+    const c1 = conn('甲')
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
     for (const m of room.members) mgr.onDisconnect(m.token)
     advanceUntilSettle(room)
     expect(room.game.state).toBe('SETTLE')
-    const winner = room.game.result.winner
-    mgr.gameAction(tokens[0], 'game.settleContinue', {})
-    mgr.gameAction(tokens[1], 'game.settleContinue', {})
-    mgr.gameAction(tokens[2], 'game.settleContinue', {})
-    mgr.gameAction(tokens[3], 'game.settleContinue', {})
-    expect(room.game.state).toBe('ROLLING')
-    expect(room.game.rollerSeat).toBe(winner)
+    // 广播需要在线连接：重连甲（clear sent 便于断言本轮推送）
+    mgr.reconnect(c1, tokens[0])
+    c1.sent.length = 0
+    // 乙丙丁仍掉线未 gone（宽限期内）：按 active 名额逐个确认（用 reconnect 建立在线连接）
+    const others = room.members.filter((m) => !m.isAI && m.token !== tokens[0])
+    const conns = [c1]
+    others.forEach((m, i) => {
+      const c = conn(m.name)
+      conns.push(c)
+      mgr.reconnect(c, m.token)
+    })
+    conns.forEach((c) => { c.sent.length = 0 })
+    for (const m of room.members) {
+      if (!m.isAI) mgr.gameAction(m.token, 'game.settleContinue', {})
+    }
+    expect(room.game).toBeNull() // 对局清空 → 派生状态回 WAITING
+    expect(mgr.roomStateOf(room)).toBe('WAITING')
+    for (const m of room.members) expect(m.ready).toBe(true) // 默认已准备，回房即可开局
+    // 回房推送延迟 1.3s（避开 afterAction 终局亮牌 1.2s 在途推送的竞态）：立即推送还没发
+    expect(conns.every((c) => !c.sent.some((x) => x.type === 'room.state'))).toBe(true)
+    vi.advanceTimersByTime(1300)
+    expect(conns.every((c) => c.sent.some((x) => x.type === 'room.state'))).toBe(true)
     vi.useRealTimers()
   })
 
-  it('settleContinue 5s 超时自动继续', () => {
+  it('settleContinue 5s 超时自动重置回 WAITING 房', () => {
     vi.useFakeTimers()
     const { room, tokens } = fullRoom()
     mgr.startGame(tokens[0], room.roomId)
@@ -416,7 +526,9 @@ describe('断线重连与结算', () => {
     advanceUntilSettle(room)
     mgr.gameAction(tokens[0], 'game.settleContinue', {})
     vi.advanceTimersByTime(5000)
-    expect(room.game.state).toBe('ROLLING')
+    expect(room.game).toBeNull()
+    expect(mgr.roomStateOf(room)).toBe('WAITING')
+    expect(room.members.every((m) => m.ready)).toBe(true)
     vi.useRealTimers()
   })
 
@@ -427,14 +539,47 @@ describe('断线重连与结算', () => {
     expect(mgr.rooms.size).toBe(0)
   })
 
-  it('sweep：WAITING 空房保留 60s 宽限，超龄才销毁（重连窗口不被提前压缩）', () => {
+  it('sweep：WAITING 有成员但全员掉线 → 立即销毁（掉线已在 onDisconnect 即时移除，此处兜底）', () => {
     const { room } = mgr.createRoom(conn('甲'), '甲')
-    room.members[0].connected = false // 模拟全员掉线（未标记 gone）
-    room.createdAt = 1000 // now=1000，房龄 0s
+    room.members[0].connected = false // 模拟全员掉线（绕过 onDisconnect 直改状态）
     mgr.sweep()
-    expect(mgr.rooms.has(room.roomId)).toBe(true) // 宽限期内仍保留
-    room.createdAt = 1000 - 60_000 // 房龄恰 60s
+    expect(mgr.rooms.has(room.roomId)).toBe(false)
+  })
+
+  it('sweep：WAITING 有人在线但长时间无活动（lastActiveAt 超 ROOM_IDLE_MS）销毁', () => {
+    const c = conn('甲')
+    const { room } = mgr.createRoom(c, '甲')
+    mgr.now = () => 1000
+    room.lastActiveAt = 1000
     mgr.sweep()
-    expect(mgr.rooms.has(room.roomId)).toBe(false) // 超过 60s 销毁
+    expect(mgr.rooms.has(room.roomId)).toBe(true) // 刚活跃：保留
+    room.lastActiveAt = 1000 - 5 * 60_000 // 5 分钟无任何活动
+    mgr.sweep()
+    expect(mgr.rooms.has(room.roomId)).toBe(false) // 长时间无反应：销毁
+  })
+
+  it('sweep：WAITING 房内成员进出会刷新 lastActiveAt，不因房龄被误杀', () => {
+    const c = conn('甲')
+    mgr.now = () => 1000
+    const { room } = mgr.createRoom(c, '甲')
+    mgr.now = () => 1000 + 10 * 60_000 // 10 分钟后
+    mgr.joinRoom(conn('乙'), '乙', room.roomId) // 新成员进入刷新 lastActiveAt
+    mgr.sweep()
+    expect(mgr.rooms.has(room.roomId)).toBe(true)
+  })
+
+  it('listRooms：只列未开局/有真人在线/未满员的房；满员与对局中不出现', () => {
+    const a = mgr.createRoom(conn('甲'), '甲').room
+    const b = mgr.createRoom(conn('乙'), '乙').room
+    mgr.joinRoom(conn('丙'), '丙', b.roomId)
+    mgr.joinRoom(conn('丁'), '丁', b.roomId)
+    mgr.joinRoom(conn('戊'), '戊', b.roomId) // b 第 4 人（满员：乙丙丁戊）
+    const list = mgr.listRooms()
+    expect(list.map((r) => r.roomId)).toEqual([a.roomId]) // b 满员不列
+    expect(list[0].playerCount).toBe(1)
+    expect(list[0].members[0]).toMatchObject({ name: '甲', connected: true, isHost: true })
+    // a 开局后也不列
+    a.game = { state: 'PLAYING' }
+    expect(mgr.listRooms()).toHaveLength(0)
   })
 })

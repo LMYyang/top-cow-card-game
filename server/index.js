@@ -57,6 +57,10 @@ function handle(mgr, conn, msg) {
   const replyError = (code, message) => reply('error', { code, message })
 
   switch (type) {
+    case 'room.list': {
+      // 大厅房间列表：无需入房身份，任何人可查（只含未开局、有真人在线、未满员的房）
+      return reply('room.list.ok', { rooms: mgr.listRooms() })
+    }
     case 'room.create': {
       const { room, token, seat, error } = mgr.createRoom(conn, sanitizeName(payload.name))
       if (error) return replyError(error.code, error.message)
@@ -93,6 +97,22 @@ function handle(mgr, conn, msg) {
       if (res.error) return replyError(res.error.code, res.error.message)
       return reply('room.ready.ok', {})
     }
+    case 'room.kick': {
+      // 房主踢人：目标由 payload.token 指定（被踢方凭 token 索引移除，房主身份服务端校验）
+      const room = mgr.roomOf(conn.token)
+      if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
+      const res = mgr.kickMember(conn.token, room.roomId, String(payload.token || ''))
+      if (res.error) return replyError(res.error.code, res.error.message)
+      return reply('room.kick.ok', {})
+    }
+    case 'room.poke': {
+      // 房主提醒未准备玩家：目标由 payload.token 指定
+      const room = mgr.roomOf(conn.token)
+      if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
+      const res = mgr.pokeMember(conn.token, room.roomId, String(payload.token || ''))
+      if (res.error) return replyError(res.error.code, res.error.message)
+      return reply('room.poke.ok', {})
+    }
     case 'room.leave': {
       // 先回执再离开：对局中 leave 会关闭连接，后发回执将永远无法送达
       reply('room.left', {})
@@ -113,6 +133,11 @@ function handle(mgr, conn, msg) {
       const res = mgr.gameAction(conn.token, type, payload)
       if (res.error) return replyError(res.error.code, res.error.message)
       return reply('action.ok', {})
+    }
+    case 'session.check': {
+      // 会话预检（大厅用）：本地存有 token 时查询是否有可恢复的房（对局中宽限期内）
+      const found = mgr.checkSession(String(payload.token || ''))
+      return reply('session.check.ok', { session: found })
     }
     case 'reconnect': {
       const reqToken = String(payload.token || '')

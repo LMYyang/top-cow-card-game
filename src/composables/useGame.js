@@ -153,10 +153,8 @@ export function useGame() {
           totalsAfter,
         }
         uni.setStorageSync('dingniuzi_history', [entry, ...prevHistory].slice(0, 50))
-        // 局末节奏：先停 800ms 让最后一手落定 → 亮出所有人扣的牌 → 等玩家点击屏幕任意位置 → 再弹结算
-        setTimeout(() => {
-          fx.revealKept = true
-        }, 800)
+        // 局末节奏（显示「本局结束」→ 停顿 → 亮牌）由 game.vue 的 paceSettle 统一编排（两模式一致），
+        // 这里不再本地定时点亮 revealKept（避免与客户端编排双重触发）
       }
       return
     }
