@@ -2,7 +2,7 @@
   <view class="hand-area">
     <view class="hand-header">
       <view class="avatar-wrap">
-        <PlayerAvatar :seat="0" size="md" />
+        <PlayerAvatar :seat="seat" size="md" />
         <slot /> <!-- 亮牌阶段等提示：显示在头像正上方 -->
       </view>
       <view class="header-info">
@@ -56,6 +56,8 @@ import { placeSides } from '../core/rules.js'
 const props = defineProps({
   hand: Array,
   kept: Array,
+  // 我的绝对座位：头像颜色与其他玩家视角中"我"的颜色一致（颜色绑定座位而非位置）
+  seat: { type: Number, default: 0 },
   playableIds: Array,
   myTurn: Boolean,
   mustDiscard: Boolean,

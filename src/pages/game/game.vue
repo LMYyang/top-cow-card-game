@@ -3,15 +3,15 @@
   <view class="table" :class="{ revealing: fx.revealKept }" @click="onRevealTap">
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
-    <!-- 对家（上） -->
+    <!-- 对家（上）：座位按我的座位旋转——每人都看到自己在下方位，相对方位不变，头像颜色对应同一人 -->
     <view id="opp-top-anchor">
-      <OpponentZone position="top" :seat="2" :label="labelOf(2)" :hand-count="opponentBySeat(2).handCount" :kept-count="opponentBySeat(2).keptCount" :is-leader="view.leaderSeat === 2" :last-move="lastMoveOf(2)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+      <OpponentZone position="top" :seat="seatAt(2)" :label="labelOf(seatAt(2))" :hand-count="opponentBySeat(seatAt(2)).handCount" :kept-count="opponentBySeat(seatAt(2)).keptCount" :is-leader="view.leaderSeat === seatAt(2)" :last-move="lastMoveOf(seatAt(2))" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
     </view>
 
     <view class="middle-row">
       <!-- 上家（左） -->
       <view id="opp-left-anchor">
-        <OpponentZone position="left" :seat="3" :label="labelOf(3)" :hand-count="opponentBySeat(3).handCount" :kept-count="opponentBySeat(3).keptCount" :is-leader="view.leaderSeat === 3" :last-move="lastMoveOf(3)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+        <OpponentZone position="left" :seat="seatAt(3)" :label="labelOf(seatAt(3))" :hand-count="opponentBySeat(seatAt(3)).handCount" :kept-count="opponentBySeat(seatAt(3)).keptCount" :is-leader="view.leaderSeat === seatAt(3)" :last-move="lastMoveOf(seatAt(3))" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
       </view>
 
       <!-- 中央 -->
@@ -40,7 +40,7 @@
 
       <!-- 下家（右） -->
       <view id="opp-right-anchor">
-        <OpponentZone position="right" :seat="1" :label="labelOf(1)" :hand-count="opponentBySeat(1).handCount" :kept-count="opponentBySeat(1).keptCount" :is-leader="view.leaderSeat === 1" :last-move="lastMoveOf(1)" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
+        <OpponentZone position="right" :seat="seatAt(1)" :label="labelOf(seatAt(1))" :hand-count="opponentBySeat(seatAt(1)).handCount" :kept-count="opponentBySeat(seatAt(1)).keptCount" :is-leader="view.leaderSeat === seatAt(1)" :last-move="lastMoveOf(seatAt(1))" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
       </view>
     </view>
 
@@ -49,6 +49,7 @@
       <HandArea
         :hand="view.myHand"
         :kept="view.myKept"
+        :seat="mySeatVal"
         :playable-ids="playableIds"
         :my-turn="myTurn"
         :must-discard="mustDiscard"
@@ -78,7 +79,7 @@
     <view v-if="fx.settleShow && view.result" class="settle-overlay">
       <view class="settle-card">
         <text class="settle-title">本局结算</text>
-        <view v-for="r in view.result.ranks" :key="r.seat" class="settle-row" :class="{ winner: r.seat === view.result.winner }">
+        <view v-for="r in settleRanks" :key="r.seat" class="settle-row" :class="{ winner: r.seat === view.result.winner }">
           <view class="settle-player">
             <PlayerAvatar :seat="r.seat" size="sm" />
             <text>{{ labelOf(r.seat) }}{{ r.seat === view.result.winner ? ' 🏆' : '' }}</text>
@@ -104,7 +105,7 @@ import HandArea from '../../components/HandArea.vue'
 import TableTimeline from '../../components/TableTimeline.vue'
 import PlayingTile from '../../components/PlayingTile.vue'
 import PlayerAvatar from '../../components/PlayerAvatar.vue'
-import { placeSides } from '../../core/rules.js'
+import { placeSides, diceToSeatOffset } from '../../core/rules.js'
 import { useGame } from '../../composables/useGame.js'
 import { useNetGame } from '../../composables/useNetGame.js'
 
@@ -145,6 +146,14 @@ const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下�
 /** UI 视角座位名（solo：固定称呼；net：服务器成员昵称） */
 const labelOf = (seat) => gameApi.value?.labelOf(seat) ?? String(seat)
 
+/**
+ * 视角旋转：把"相对方位偏移"换算成绝对座位。
+ * 布局约定 bottom=我(偏移0)、right=下家(1)、top=对家(2)、left=上家(3)，
+ * mySeat=0（solo 恒 0）时恒等映射，不影响单机；net 下每人看到自己在下方，
+ * 座位相对方位不变、整个视图按本人旋转。
+ */
+const seatAt = (offset) => (mySeatVal.value + offset) % 4
+
 /** 动作代理：solo 同步返回 {ok,...}，net 为 async 请求，统一 await 后处理 */
 const roll = (...args) => gameApi.value?.roll(...args)
 async function myPlay(tileId, side) {
@@ -172,10 +181,26 @@ const diceLanded = ref(false)
 const leaderRevealed = ref(false)
 let diceFaceTimer = null
 let revealTimer = null
+// 连续局复位：beginRound 每局都重设 rollerSeat，以它为锚清掉上一局残留的
+// 揭示文案/回弹/旧骰面。若不复位，第二局 ROLLING 时 leaderRevealed 残留 true，
+// 模板 v-if 揭示文案顶掉 v-else-if 掷骰按钮，掷骰者点不到按钮全场卡死
+// （solo 走 redirectTo 整页重建从未暴露；net 同页连续局必现）。
+// fx.dice 由 game.state 推送整体覆盖（beginRound 推 dice:null），此处无需手动清。
+watch(
+  () => view.value.rollerSeat,
+  () => {
+    clearTimers()
+    diceLanded.value = false
+    leaderRevealed.value = false
+    randomFace.value = 1 + Math.floor(Math.random() * 6)
+  }
+)
 const diceResultText = computed(() => {
   if (!fx.value.dice) return ''
-  const OFFSET_NAMES = { 1: '自己', 5: '自己', 2: '下家', 6: '下家', 3: '对家', 4: '上家' }
-  return `掷出 ${fx.value.dice} 点 · ${OFFSET_NAMES[fx.value.dice]}是头牌`
+  // 头牌 = 掷骰者 + 骰点偏移；换算成相对"我"的方位称呼（视图按本人旋转，文案方位也随视角）
+  const rel = (diceRollerSeat.value + diceToSeatOffset(fx.value.dice) - mySeatVal.value + 4) % 4
+  const REL_NAMES = ['自己', '下家', '对家', '上家']
+  return `掷出 ${fx.value.dice} 点 · ${REL_NAMES[rel]}是头牌`
 })
 function clearTimers() {
   if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
@@ -223,6 +248,15 @@ const turnText = computed(() => {
     return mustDiscard.value ? '无牌可接，请扣牌' : '轮到你出牌'
   }
   return `等待 ${labelOf(view.value.currentSeat)} 行动…`
+})
+
+/** 结算名单按视角旋转排序：我（相对偏移 0）在最上，其余按下家→对家→上家 */
+const settleRanks = computed(() => {
+  const ranks = view.value.result?.ranks
+  if (!ranks) return []
+  return [...ranks].sort(
+    (a, b) => ((a.seat - mySeatVal.value + 4) % 4) - ((b.seat - mySeatVal.value + 4) % 4)
+  )
 })
 
 function opponentBySeat(seat) {
@@ -297,10 +331,11 @@ function elById(id) {
   return typeof document !== 'undefined' ? document.getElementById(id) : null
 }
 
-/** 出牌方（座位）锚点元素：我=手牌区包裹层（头含头像），其余=各 OpponentZone 包裹层 */
+/** 出牌方（座位）锚点元素：我=手牌区包裹层（头含头像），其余=按相对方位取各 OpponentZone 包裹层 */
 function anchorElOf(seat) {
   if (seat === mySeatVal.value) return elById('hand-anchor')
-  return elById({ 1: 'opp-right-anchor', 2: 'opp-top-anchor', 3: 'opp-left-anchor' }[seat])
+  const offset = (seat - mySeatVal.value + 4) % 4
+  return elById({ 1: 'opp-right-anchor', 2: 'opp-top-anchor', 3: 'opp-left-anchor' }[offset])
 }
 
 /** 读取链上新条目真牌的最终渲染朝向：真牌根节点带 mirrored class（取反与否取决于所在列方向） */

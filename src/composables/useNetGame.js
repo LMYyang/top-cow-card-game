@@ -22,7 +22,8 @@ export function useNetGame(net = sharedNet()) {
   let stopWatch = null
   const roomId = ref(null)
   const mySeat = ref(0)
-  const names = reactive({ 0: '我', 1: '下家', 2: '对家', 3: '上家' })
+  // 座位→昵称表：由服务器 game.state 下发（绝对座位）。初始为空避免快照前把别家错标成「我」
+  const names = reactive({})
 
   const offState = net.on('game.state', ({ view: v, fx: f, roomId: rid, yourSeat, names: n }) => {
     Object.keys(v).forEach((k) => { view[k] = v[k] })
@@ -58,7 +59,7 @@ export function useNetGame(net = sharedNet()) {
     onUnmounted(() => stopWatch?.())
   }
 
-  /** UI 视角座位名：自己=「我」，其余显示成员昵称 */
+  /** UI 视角座位名：自己=「我」，其余显示成员昵称（names 为服务器下发的绝对座位表） */
   const labelOf = (seat) => (seat === mySeat.value ? '我' : names[seat] || `座位${seat}`)
 
   const myTurn = computed(() => view.state === 'PLAYING' && view.currentSeat === mySeat.value)

@@ -182,6 +182,30 @@ describe('useNetGame', () => {
     // 单测在组件外调用（无 getCurrentInstance）：订阅保持注册，推送仍生效（预期行为，不告警不崩溃）
   })
 
+  it('视角旋转：快照未到（names 空）时 labelOf 不把别家误标成「我」', () => {
+    const net = fakeNet()
+    const { labelOf } = useNetGame(net)
+    // 初始 mySeat=0 但 names 为空：其余座位显示占位而非「我」
+    expect(labelOf(0)).toBe('我') // 默认座位 0 是自己
+    expect(labelOf(1)).toBe('座位1')
+    expect(labelOf(2)).toBe('座位2')
+    expect(labelOf(3)).toBe('座位3')
+  })
+
+  it('视角旋转：非 0 座位玩家 labelOf 中「我」跟随 yourSeat，其余显示昵称', () => {
+    const net = fakeNet()
+    const { labelOf, mySeat } = useNetGame(net)
+    net.__push('game.state', {
+      view: { state: 'PLAYING', currentSeat: 0, openEnds: null, myHand: [], myKept: [], opponents: [], tableHistory: [], tableTile: null, leaderSeat: 1, rollerSeat: 1, result: null },
+      fx: {}, yourSeat: 3, names: { 0: '甲', 1: '乙', 2: '丙', 3: '丁' },
+    })
+    expect(mySeat.value).toBe(3)
+    expect(labelOf(3)).toBe('我') // 我的绝对座位显示「我」
+    expect(labelOf(0)).toBe('甲') // 别家显示昵称（颜色仍绑定绝对座位，跨视角一致）
+    expect(labelOf(1)).toBe('乙')
+    expect(labelOf(2)).toBe('丙')
+  })
+
   it('挂载即拉快照：reconnect 回执带 gameState 时经 game.state 处理器填充视图', async () => {
     const net = fakeNet()
     uni.getStorageSync = (k) => ({ dingniuzi_player_token: 'tok-8' }[k] ?? '')

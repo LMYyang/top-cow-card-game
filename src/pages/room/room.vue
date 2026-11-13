@@ -3,7 +3,7 @@
   <view class="room">
     <view class="head">
       <text class="room-id">房间号 {{ roomId }}</text>
-      <text class="hint">把房间号告诉朋友，或让他们用「快速匹配」加入</text>
+      <text class="hint">开局时空位自动补 AI 代打，人不够也能玩</text>
     </view>
     <view class="seats">
       <view
@@ -16,7 +16,7 @@
         <text class="seat-no">{{ seatName(seat) }}</text>
         <text class="seat-name">{{ memberOf(seat)?.name || '空位' }}</text>
         <text v-if="memberOf(seat)" class="seat-status">
-          {{ memberOf(seat).isHost ? '房主 · ' : '' }}{{ seatReadyText(memberOf(seat)) }}{{ memberOf(seat).connected ? '' : ' · 掉线' }}
+          {{ memberOf(seat).isHost ? '房主 · ' : '' }}{{ memberOf(seat).isAI ? 'AI 代打' : seatReadyText(memberOf(seat)) }}{{ memberOf(seat).connected ? '' : ' · 掉线' }}
         </text>
         <text v-else class="seat-status">点击入座</text>
       </view>
@@ -57,16 +57,19 @@ const offStart = net.on('game.state', () => {
 function memberOf(seat) { return room.value?.members.find((m) => m.seat === seat) || null }
 const myMember = computed(() => (mySeat.value === null ? null : memberOf(mySeat.value)))
 const isHost = computed(() => myMember.value?.isHost || false)
-// 与服务器 canStart 同规则：AI 座位视为天然已准备（Task 7 阶段尚无 AI 成员，留作兼容）
+// 与服务器 canStart 同规则：AI 补位座位天然已准备；真人不足 4 人也可开局（空位由服务器自动补 AI）
 const canStart = computed(() => {
   if (!room.value) return false
-  return room.value.members.length === 4 && room.value.members.every((m) => m.ready || m.isAI)
+  const real = room.value.members.filter((m) => !m.isAI)
+  return real.length > 0 && real.every((m) => m.ready)
 })
 const startHint = computed(() => {
   if (canStart.value) return '开始游戏'
+  // 开局时空位自动补 AI：提示里说明缺的人由 AI 托底，房主可提前开局
   const real = room.value ? room.value.members.filter((m) => !m.isAI).length : 0
-  const need = 4 - real
-  return need > 0 ? `还差 ${need} 人 / 待准备` : '待全员准备'
+  const ready = room.value ? room.value.members.filter((m) => m.ready || m.isAI).length : 0
+  if (ready < real) return `还差 ${real - ready} 人准备（空位由 AI 补齐）`
+  return '可开始（空位由 AI 补齐）'
 })
 const seatName = (seat) => `${seat + 1}号位 · ${SEAT_NAMES[seat]}`
 const seatReadyText = (m) => (m.isAI ? '' : m.ready ? '已准备' : '未准备')

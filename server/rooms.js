@@ -188,9 +188,21 @@ export class RoomManager {
   // ---------- 对局 ----------
 
   canStart(room) {
-    if (room.members.length !== 4) return { ok: false, message: '需要 4 名玩家' }
+    if (room.members.length === 0) return { ok: false, message: '需要至少 1 名玩家' }
     if (!room.members.every((m) => m.ready || m.isAI)) return { ok: false, message: '所有玩家须先准备' }
     return { ok: true }
+  }
+
+  /** 开局前把空位补成 AI 成员（isAI 天然已准备；走 scheduleAiTurn/maybeAutoRoll 既有托管代打路径） */
+  fillWithAI(room) {
+    const used = new Set(room.members.map((m) => m.seat))
+    for (let seat = 0; seat < 4; seat++) {
+      if (used.has(seat)) continue
+      room.members.push({
+        seat, token: null, name: `AI·小牛${seat}`, connected: true, gone: false,
+        ready: true, isHost: false, isAI: true, conn: null, graceTimer: null, aiTimer: null,
+      })
+    }
   }
 
   startGame(token, roomId) {
@@ -199,8 +211,10 @@ export class RoomManager {
     if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始' } }
     const me = this.memberByToken(room, token)
     if (!me || !me.isHost) return { error: { code: 'NOT_HOST', message: '只有房主能开始' } }
+    this.fillWithAI(room) // 空位自动补 AI：2~3 名真人也能开局（canStart 不再要求满员）
     const check = this.canStart(room)
     if (!check.ok) return { error: { code: 'CANNOT_START', message: check.message } }
+    this.pushRoomState(room) // 房间页立即看到 AI 座位就位
     this.beginRound(room, me.seat) // 首局掷骰者=房主座位
     return { ok: true }
   }
@@ -478,12 +492,13 @@ export class RoomManager {
 
   // ---------- 结算继续 ----------
 
-  /** 结算后点继续：全员确认（或 5s 超时）开下一局，掷骰者=上局赢家 */
+  /** 结算后点继续：全员确认（或 5s 超时）开下一局，掷骰者=上局赢家。
+   *  AI 成员自动计入确认数（不占 active 名额也不投确认），真人确认齐或超时即开 */
   settleContinue(room, me) {
     if (!room.game || room.game.state !== 'SETTLE') return { error: { code: 'BAD_STATE', message: '非结算阶段' } }
     room.settleAck.add(me.seat)
-    const active = room.members.filter((m) => !m.gone).length
-    if (room.settleAck.size >= active) {
+    const active = room.members.filter((m) => !m.gone && !m.isAI).length
+    if (active === 0 || room.settleAck.size >= active) {
       this.startNextRound(room)
     } else if (!room.settleTimer) {
       room.settleTimer = setTimeout(() => this.startNextRound(room), 5000)

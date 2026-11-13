@@ -181,12 +181,49 @@ function fullRoom() {
 }
 
 describe('开始对局与动作路由', () => {
-  it('未满员开始被拒；满员全准备开始成功并广播 game.state', () => {
+  it('未满员开局：空位自动补 AI 成员并进入掷骰编排', () => {
     const c1 = conn('甲')
     const { room, token } = mgr.createRoom(c1, '甲')
     mgr.joinRoom(conn('乙'), '乙', room.roomId)
-    const early = mgr.startGame(token, room.roomId)
-    expect(early.error).toBeDefined()
+    expect(room.members.length).toBe(2) // 两个真人
+    vi.useFakeTimers()
+    const res = mgr.startGame(token, room.roomId) // 房主未准备也先别准备，直接测补位+准备校验
+    expect(res.error).toMatchObject({ code: 'CANNOT_START' }) // 真人未准备时仍拒绝
+    mgr.setReady(token, room.roomId, true)
+    const r2 = room.members.find(m => m.name === '乙')
+    mgr.setReady(r2.token, room.roomId, true)
+    const res2 = mgr.startGame(token, room.roomId)
+    expect(res2.error).toBeUndefined()
+    expect(room.members).toHaveLength(4) // 空位已补 AI
+    const ais = room.members.filter(m => m.isAI)
+    expect(ais).toHaveLength(2)
+    expect(ais.every(m => m.ready && m.conn === null && m.token === null)).toBe(true)
+    expect(mgr.roomStateOf(room)).toBe('ROLLING') // 开局先进入掷骰编排
+    expect(c1.sent.some(m => m.type === 'room.state')).toBe(true) // AI 就位已推送
+    // 掷骰权在真人房主手上：房主先掷；随后轮到 AI 座位时代打推进对局。
+    // 头牌=掷骰者+骰点偏移：偏移 0（骰 1/5）时头牌即房主本人（真人首出），偏移非 0 时头牌是 AI。
+    // 两种路径都必须能推进（AI 座位被 scheduleAiTurn 驱动），故循环步进直至出牌历史非空。
+    let rolled = mgr.gameAction(token, 'game.roll', {})
+    expect(rolled.error).toBeUndefined()
+    vi.advanceTimersByTime(3600)
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    // 头牌若为真人（乙）：乙的 token 未知名字可能重复，直接用成员 token 找真人代出；更稳妥的方式是允许 AI 路径验证：
+    // 直接让头牌座位所属成员（无论真人/AI）行动——真人用其 token 出牌，AI 靠定时器。
+    const leaderMember = room.members.find(m => m.seat === room.game.leaderSeat)
+    if (!leaderMember.isAI) {
+      // 真人头牌：用该成员 token 首出（不拉三家约束由服务器校验，任取手牌第一张可能被拒——
+      // 改为直接掉线进托管让 AI 代打，统一走 AI 路径）
+      mgr.onDisconnect(leaderMember.token)
+    }
+    for (let i = 0; i < 30 && room.game.tableHistory.length === 0; i++) vi.advanceTimersByTime(200)
+    expect(room.game.tableHistory.length).toBeGreaterThan(0) // AI 已代打
+    vi.useRealTimers()
+  })
+
+  it('满员全准备开始成功并广播 game.state', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    mgr.joinRoom(conn('乙'), '乙', room.roomId)
     // 补齐同一房间至 4 人并全员准备（原稿 fullRoom() 另起新房，其 token 与本 room 不匹配）
     for (const n of ['丙', '丁']) mgr.joinRoom(conn(n), n, room.roomId)
     for (const m of room.members) mgr.setReady(m.token, room.roomId, true)
@@ -194,6 +231,8 @@ describe('开始对局与动作路由', () => {
     c1.sent.length = 0
     const res = mgr.startGame(token, room.roomId)
     expect(res.error).toBeUndefined()
+    expect(room.members).toHaveLength(4) // 满员不补 AI
+    expect(room.members.every(m => !m.isAI)).toBe(true)
     expect(mgr.roomStateOf(room)).toBe('ROLLING') // 开局先进入掷骰编排
     const roller = room.members.find(m => m.seat === room.game.rollerSeat)
     mgr.gameAction(roller.token, 'game.roll', {})
