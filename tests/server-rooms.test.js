@@ -614,8 +614,13 @@ describe('断线重连与结算', () => {
     mgr.startGame(tokens[0], room.roomId)
     for (const m of room.members) mgr.onDisconnect(m.token)
     advanceUntilSettle(room)
-    const winner = room.game.result.winner
-    room.lastWinnerSeat = winner // 模拟上局收尾记录
+    let winner = room.game.result.winner
+    // 赢家恰是房主（甲）时换测乙丙丁任一人：下面要移除赢家成员，房主必须留在房里点开始
+    if (winner === 0) winner = 1
+    // 模拟上一局收尾记录（winnerMember=token 形态）
+    const wm = room.members.find((m) => m.seat === winner)
+    room.lastWinnerSeat = winner
+    room.lastWinnerToken = wm ? wm.token : null
     room.game = null
     room.settleAck = new Set()
     room.settleTimer = null
@@ -624,6 +629,72 @@ describe('断线重连与结算', () => {
     mgr.startGame(tokens[0], room.roomId)
     expect(room.game.rollerSeat).not.toBe(winner)
     expect(room.game.rollerSeat).toBe(room.members.find((m) => m.isHost).seat)
+    vi.useRealTimers()
+  })
+
+  it('SETTLE 态 roomState 带 settling=true 标记；收尾后回 false', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    advanceUntilSettle(room)
+    expect(room.game.state).toBe('SETTLE')
+    expect(mgr.roomState(room).settling).toBe(true) // 结算收尾未完成
+    mgr.gameAction(tokens[0], 'game.settleContinue', {})
+    vi.advanceTimersByTime(5000) // 其余未确认，超时收尾
+    expect(mgr.roomState(room).settling).toBe(false) // 收尾后回 WAITING
+    vi.useRealTimers()
+  })
+
+  it('SETTLE 态快照成员带 settled 标记：已确认=true、未确认=false（连续局 ready 全真时的区分依据）', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    advanceUntilSettle(room)
+    expect(room.game.state).toBe('SETTLE')
+    // 关键前提：连续局收尾时 ready 已全为 true（上一局收尾置位），无法靠 ready 区分谁点了
+    expect(room.members.every((m) => m.ready)).toBe(true)
+    // 仅房主甲点「再来一局」
+    mgr.gameAction(tokens[0], 'game.settleContinue', {})
+    let snap = mgr.roomState(room)
+    expect(snap.settling).toBe(true)
+    for (const mem of snap.members) {
+      expect(mem.settled).toBe(mem.seat === 0) // 只有甲 settled=true，其余（含 AI 补位无 ack）=false
+    }
+    // 其余真人逐个确认 → 全员 settled=true → 立即收尾回 WAITING
+    for (const m of room.members.filter((x) => !x.isAI && x.token !== tokens[0])) {
+      mgr.gameAction(m.token, 'game.settleContinue', {})
+    }
+    snap = mgr.roomState(room)
+    expect(snap.settling).toBe(false)
+    expect(snap.members.every((mem) => mem.settled === false)).toBe(true) // 收尾后 settleAck 已清空
+    vi.useRealTimers()
+  })
+
+  it('SETTLE 收尾未完成时房主开局被拒（须等全员确认或 5s 超时收尾）', () => {
+    vi.useFakeTimers()
+    const c1 = conn('甲')
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    advanceUntilSettle(room)
+    expect(room.game.state).toBe('SETTLE')
+    // 全员重连，仅房主甲点「再来一局」（其余停在结算弹窗）
+    mgr.reconnect(c1, tokens[0])
+    for (const m of room.members.filter((x) => !x.isAI && x.token !== tokens[0])) mgr.reconnect(conn(m.name), m.token)
+    mgr.gameAction(tokens[0], 'game.settleContinue', {})
+    c1.sent.length = 0
+    // 房主想直接开局：被拒（结算收尾未完成，须等其余玩家确认或超时）
+    const res = mgr.startGame(tokens[0], room.roomId)
+    expect(res.error).toMatchObject({ code: 'ROOM_STARTED', message: '对局已开始' })
+    expect(room.game).not.toBeNull() // 旧对局还在（未收尾）
+    // 5s 超时收尾后即可开局
+    vi.advanceTimersByTime(5000)
+    expect(room.game).toBeNull()
+    const res2 = mgr.startGame(tokens[0], room.roomId)
+    expect(res2.error).toBeUndefined()
+    expect(room.game.state).toBe('ROLLING')
     vi.useRealTimers()
   })
 

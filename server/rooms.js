@@ -30,14 +30,27 @@ export class RoomManager {
     return room.game ? room.game.state : 'WAITING'
   }
 
+  /** 结算收尾前（room.game 仍为 SETTLE 对局）：有人在结算弹窗未点「再来一局」。
+   *  客户端据 room.state.settling 禁用开局按钮并提示等待；座位文案用成员 settled
+   *  字段区分：已点「再来一局」显示已准备，还没点的显示结算中（见 roomState）；
+   *  房主须等全员确认或 5s 超时收尾后才能开始（见 startGame） */
+  isSettling(room) {
+    return !!room.game && room.game.state === 'SETTLE'
+  }
+
   /** 房间快照（下发给客户端的 members 形态，剥离连接与定时器等内部字段） */
   roomState(room) {
     return {
       roomId: room.roomId,
       state: this.roomStateOf(room),
+      settling: this.isSettling(room), // 结算收尾未完成：客户端禁用开局按钮并提示等待
       members: room.members.map((m) => ({
         seat: m.seat, name: m.name, connected: m.connected, gone: m.gone,
         ready: m.ready, isHost: m.isHost, isAI: m.isAI, token: m.token,
+        // 结算收尾期间：是否已点「再来一局」（在 settleAck 中）。ready 在连续局收尾时
+        // 已全为 true（上一局 finishSettle 置位），无法区分谁点了，客户端靠此字段
+        // 显示「已准备 / 结算中」；非 settling 时该字段无意义，恒 false
+        settled: room.settleAck.has(m.seat),
       })),
     }
   }
@@ -145,7 +158,7 @@ export class RoomManager {
     if (rejoined) return rejoined
     // lastWinnerSeat/lastWinnerToken：上局赢家（连续局掷骰者），随 finishSettle 写入；新局无记录
     const roomId = this.newRoomId()
-    const room = { roomId, members: [], game: null, createdAt: this.now(), lastActiveAt: this.now(), lastWinnerSeat: undefined, lastWinnerToken: undefined }
+    const room = { roomId, members: [], game: null, settleAck: new Set(), createdAt: this.now(), lastActiveAt: this.now(), lastWinnerSeat: undefined, lastWinnerToken: undefined }
     this.rooms.set(roomId, room)
     return this.joinRoom(conn, name, roomId)
   }

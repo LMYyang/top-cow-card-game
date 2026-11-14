@@ -33,7 +33,7 @@
           </text>
           <!-- 房主视角：未准备真人座位右侧同行「提醒准备」按钮；被提醒方收 poke 推送弹窗 -->
           <text
-            v-if="isHost && !memberOf(seat).isAI && !memberOf(seat).ready && memberOf(seat).connected"
+            v-if="isHost && !roomSettling && !memberOf(seat).isAI && !memberOf(seat).ready && memberOf(seat).connected"
             class="seat-poke"
             @click.stop="poke(memberOf(seat))"
           >提醒准备</text>
@@ -43,8 +43,8 @@
     </view>
     <view class="actions">
       <button v-if="isHost" class="btn-primary start-btn" :disabled="!canStart" @click="start">{{ startHint }}</button>
-      <button v-if="myMember && !isHost && !myMember.ready" class="btn-secondary" @click="setReady(true)">准备</button>
-      <button v-else-if="myMember && !isHost && myMember.ready" class="btn-secondary" @click="setReady(false)">取消准备</button>
+      <button v-if="myMember && !isHost && !myMember.ready && !roomSettling" class="btn-secondary" @click="setReady(true)">准备</button>
+      <button v-else-if="myMember && !isHost && (myMember.ready || roomSettling)" class="btn-secondary" @click="setReady(false)">取消准备</button>
       <button class="btn-leave" @click="leave">离开房间</button>
     </view>
     <!-- 房主提醒弹窗：自绘遮罩卡片，与结算弹窗同风格（深木色卡片 + 金色标题），uni.showModal 样式无法定制 -->
@@ -70,6 +70,9 @@ const room = ref(null)
 const mySeat = ref(null)
 
 const redirected = ref(false) // game.state 只跳一次：重连握手等场景服务器可能重发开局推送
+// 结算收尾未完成（还有人在结算弹窗没点「再来一局」）：SETTLE 态 room.state 也会推送到本页。
+// 影响开始按钮（禁用+等待提示）、操作守卫与座位文案（未点者显示「结算中」，见 seatReadyText）
+const roomSettling = computed(() => room.value?.settling || false)
 const offRoom = net.on('room.state', ({ room: r }) => {
   room.value = r
   roomId.value = r.roomId
@@ -107,13 +110,16 @@ const offStart = net.on('game.state', ({ view }) => {
 function memberOf(seat) { return room.value?.members.find((m) => m.seat === seat) || null }
 const myMember = computed(() => (mySeat.value === null ? null : memberOf(mySeat.value)))
 const isHost = computed(() => myMember.value?.isHost || false)
-// 与服务器 canStart 同规则：AI 补位座位天然已准备；真人不足 4 人也可开局（空位由服务器自动补 AI）
+// 与服务器 canStart 同规则：AI 补位座位天然已准备；真人不足 4 人也可开局（空位由服务器自动补 AI）。
+// 结算收尾未完成（roomSettling）时不放行开局：未点「再来一局」的玩家还没真正 ready，
+// 由服务器在全员确认（或 5s 超时）收尾后再开
 const canStart = computed(() => {
-  if (!room.value) return false
+  if (!room.value || roomSettling.value) return false
   const real = room.value.members.filter((m) => !m.isAI)
   return real.length > 0 && real.every((m) => m.ready)
 })
 const startHint = computed(() => {
+  if (roomSettling.value) return '等待其他玩家结算完成…'
   if (canStart.value) return '开始游戏'
   // 房主免准备、其余真人需手动准备：差人数 = 未准备的真人数
   const real = room.value ? room.value.members.filter((m) => !m.isAI) : []
@@ -121,11 +127,16 @@ const startHint = computed(() => {
   if (unready > 0) return `还差${unready}人准备·空位AI补齐`
   return '可开始·空位AI补齐'
 })
-const seatReadyText = (m) => (m.isAI ? '' : m.ready ? '已准备' : '未准备')
+// 结算收尾期间座位文案（服务端 settleAck → settled 字段）：
+// 已点「再来一局」的真人显示「已准备」，还没点的显示「结算中」——不能用 ready 区分，
+// 连续局收尾时全员 ready 已是 true（上一局收尾置位），settleAck 才是本次点击事实
+const seatReadyText = (m) =>
+  m.isAI ? '' : roomSettling.value && !m.settled ? '结算中' : m.ready ? '已准备' : '未准备'
 
 async function tapSeat(seat) {
   if (!room.value || mySeat.value === null) return // reconnect 快照未到时无从判断自己座位
   if (seat === mySeat.value || memberOf(seat)) return
+  if (roomSettling.value) { uni.showToast({ title: '结算中，稍后再换座位', icon: 'none' }); return }
   try {
     const res = await net.request('room.seat', { seat })
     if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
@@ -135,6 +146,19 @@ async function tapSeat(seat) {
   }
 }
 async function setReady(ready) {
+  // 结算收尾未完成时服务器只接受 game.settleContinue（room.ready 会被 ROOM_STARTED 拒）：
+  // settleContinue 幂等且效果即「已准备」，用它代替，点「取消准备」则无操作
+  if (roomSettling.value) {
+    if (ready) {
+      try {
+        const res = await net.request('game.settleContinue', {})
+        if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+      } catch (e) {
+        uni.showToast({ title: e.message || '请求失败', icon: 'none' })
+      }
+    }
+    return
+  }
   try {
     const res = await net.request('room.ready', { ready })
     if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
@@ -143,6 +167,8 @@ async function setReady(ready) {
   }
 }
 async function kick(member) {
+  // 结算收尾未完成时踢人会被服务器拒（非 WAITING 态）；收尾最多 5s，稍等即可
+  if (roomSettling.value) { uni.showToast({ title: '结算中，稍后再操作', icon: 'none' }); return }
   try {
     const res = await net.request('room.kick', { token: member.token })
     if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
@@ -151,6 +177,7 @@ async function kick(member) {
   }
 }
 async function poke(member) {
+  if (roomSettling.value) return // 「提醒准备」按钮在结算态不渲染，防御性守卫
   try {
     const res = await net.request('room.poke', { token: member.token })
     if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
