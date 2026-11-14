@@ -1,5 +1,7 @@
 import { createServer } from 'node:http'
-import { pathToFileURL } from 'node:url'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { RoomManager } from './rooms.js'
 
@@ -13,8 +15,38 @@ const HEARTBEAT_MS = 15_000 // 心跳周期：连续两轮（~30s）ping 无回�
 
 export function createServerApp(port = 3001, { heartbeatMs = HEARTBEAT_MS } = {}) {
   const mgr = new RoomManager()
-  const httpServer = createServer((_req, res) => {
-    res.writeHead(426).end('WebSocket only') // 拒绝普通 HTTP 请求
+  // 同端口托管 H5 静态构建产物（dist/build/h5）：单服务部署到 Render 时前端 + ws 共用一个端口。
+  // 目录不存在（纯后端部署/本地只跑 ws）时退回 426，行为与原先一致。
+  const staticDir = process.env.STATIC_DIR
+    ? path.resolve(process.env.STATIC_DIR)
+    : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist/build/h5')
+  let staticReady = null
+  const httpServer = createServer(async (req, res) => {
+    try {
+      // 只允许 GET 的静态读取，路径限制在 staticDir 内（防 ../ 目录穿越）
+      const url = new URL(req.url, 'http://localhost')
+      let pathname = decodeURIComponent(url.pathname)
+      if (pathname.includes('..')) { res.writeHead(403).end(); return }
+      if (pathname === '/') pathname = '/index.html'
+      const file = path.join(staticDir, pathname)
+      if (!file.startsWith(staticDir)) { res.writeHead(403).end(); return }
+      staticReady ||= fs.readdir(staticDir).then(() => true, () => false) // 首次探测产物是否存在
+      if (!(await staticReady)) { res.writeHead(426).end('WebSocket only'); return }
+      const data = await fs.readFile(file).catch(() => null)
+      if (data === null) {
+        // SPA 路由回退：非资源路径一律回 index.html（hash 路由其实用不到，防御性兜底）
+        const index = await fs.readFile(path.join(staticDir, 'index.html')).catch(() => null)
+        if (index === null) { res.writeHead(404).end('Not Found'); return }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(index)
+        return
+      }
+      const ext = path.extname(file).toLowerCase()
+      const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2' }
+      res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' }).end(data)
+    } catch (e) {
+      console.error('[server] static error:', e.message)
+      res.writeHead(500).end()
+    }
   })
   const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 }) // 限制单帧大小，防恶意大帧
 
@@ -184,5 +216,5 @@ function sanitizeName(name) {
 const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : ''
 if (entry && entry === import.meta.url) {
   const app = createServerApp(Number(process.env.PORT || 3001))
-  app.httpServer.listen(app.port, () => console.log(`[dingniuzi] ws server listening on :${app.port}`))
+  app.httpServer.listen(app.port, () => console.log(`[dingniuzi] server listening on :${app.port}（static: ${process.env.STATIC_DIR || '../dist/build/h5'}）`))
 }
