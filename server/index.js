@@ -5,11 +5,13 @@ import { RoomManager } from './rooms.js'
 
 /**
  * 顶牛子联网对战服务器。
- * createServerApp(port) 返回 { httpServer, wss, port, mgr }，便于测试用随机端口。
+ * createServerApp(port, opts) 返回 { httpServer, wss, port, mgr }，便于测试用随机端口与短心跳。
  * node index.js 直接启动（默认 3001，PORT 环境变量可覆盖）。
  */
 
-export function createServerApp(port = 3001) {
+const HEARTBEAT_MS = 15_000 // 心跳周期：连续两轮（~30s）ping 无回应判定死链
+
+export function createServerApp(port = 3001, { heartbeatMs = HEARTBEAT_MS } = {}) {
   const mgr = new RoomManager()
   const httpServer = createServer((_req, res) => {
     res.writeHead(426).end('WebSocket only') // 拒绝普通 HTTP 请求
@@ -21,11 +23,32 @@ export function createServerApp(port = 3001) {
     const conn = {
       raw: socket,
       token: null, // 认证后由路由写入（room.* 成功响应或 reconnect）
+      alive: true, // 心跳标记：每轮 ping 前置 false，收到 pong（或任何帧）置 true
       send(obj) { if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj)) },
       close() { try { socket.close() } catch { /* noop */ } },
     }
     // 收帧异常（非 mask 帧/非法 UTF-8/超 maxPayload）会 emit 'error'，无监听会 uncaughtException 崩服
     socket.on('error', (err) => console.error('[server] socket error:', err.message))
+    // 半开连接检测：客户端断网/杀进程时 TCP 不会发 FIN，socket 'close' 永不触发，
+    // 成员 connected 恒为 true → WAITING 房永远不被清理（房间里僵尸占位、列表一直展示）。
+    // 服务端周期 ping，两轮无 pong 视为死链 terminate()，触发 onConnClose 走正常断线清理。
+    socket.on('pong', () => { conn.alive = true })
+    socket.on('message', () => { conn.alive = true }) // 有任何业务帧也算活着
+    const beat = setInterval(() => {
+      if (socket.readyState !== socket.OPEN) { clearInterval(beat); return }
+      if (!conn.alive) {
+        clearInterval(beat)
+        socket.terminate() // 触发 'close' → mgr.onConnClose(conn)
+        return
+      }
+      conn.alive = false
+      try { socket.ping() } catch { /* readyState 竞态：下一轮再判 */ }
+    }, heartbeatMs)
+    beat.unref?.()
+    socket.on('close', () => {
+      clearInterval(beat)
+      mgr.onConnClose(conn)
+    })
     socket.on('message', (raw) => {
       let msg
       try { msg = JSON.parse(raw.toString()) } catch {
@@ -40,7 +63,6 @@ export function createServerApp(port = 3001) {
         console.error('[server] handle error:', e)
       }
     })
-    socket.on('close', () => mgr.onConnClose(conn))
   })
 
   const sweepTimer = setInterval(() => mgr.sweep(), 30_000)
@@ -62,7 +84,7 @@ function handle(mgr, conn, msg) {
       return reply('room.list.ok', { rooms: mgr.listRooms() })
     }
     case 'room.create': {
-      const { room, token, seat, error } = mgr.createRoom(conn, sanitizeName(payload.name))
+      const { room, token, seat, error } = mgr.createRoom(conn, sanitizeName(payload.name), String(payload.token || ''))
       if (error) return replyError(error.code, error.message)
       conn.token = token
       return reply('room.created', { room: mgr.roomState(room), token, yourSeat: seat })
@@ -70,13 +92,13 @@ function handle(mgr, conn, msg) {
     case 'room.join': {
       const roomId = Number(payload.roomId)
       if (!Number.isInteger(roomId)) return replyError('BAD_REQUEST', '房间号非法')
-      const { room, token, seat, error } = mgr.joinRoom(conn, sanitizeName(payload.name), roomId)
+      const { room, token, seat, error } = mgr.joinRoom(conn, sanitizeName(payload.name), roomId, String(payload.token || ''))
       if (error) return replyError(error.code, error.message)
       conn.token = token
       return reply('room.joined', { room: mgr.roomState(room), token, yourSeat: seat })
     }
     case 'room.quickMatch': {
-      const { room, token, seat, error } = mgr.quickMatch(conn, sanitizeName(payload.name))
+      const { room, token, seat, error } = mgr.quickMatch(conn, sanitizeName(payload.name), String(payload.token || ''))
       if (error) return replyError(error.code, error.message)
       conn.token = token
       return reply('room.joined', { room: mgr.roomState(room), token, yourSeat: seat })

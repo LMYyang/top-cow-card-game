@@ -56,14 +56,16 @@ async function refreshRooms() {
   }
 }
 
-/** 点击房间条目加入：复用大厅的 enter 流程（建连/昵称持久化在 lobby 已完成，这里直接带昵称请求） */
+/** 点击房间条目加入：复用大厅的 enter 流程（建连/昵称持久化在 lobby 已完成，这里直接带昵称请求）；
+ *  携带本地旧 token：断线重进同一房时服务器复用历史座位，不挤出新座位 */
 async function joinById(roomId) {
   if (listLoading.value) return
   try {
     if (net.status.value !== 'open') await net.connect()
     const name = uni.getStorageSync('dingniuzi_player_name') || `玩家${Math.floor(1000 + Math.random() * 9000)}`
     uni.setStorageSync('dingniuzi_player_name', name)
-    const res = await net.request('room.join', { name, roomId })
+    const oldToken = uni.getStorageSync('dingniuzi_player_token')
+    const res = await net.request('room.join', { name, roomId, token: oldToken || '' })
     if (res.type === 'error') {
       uni.showToast({ title: res.payload.message, icon: 'none' })
       refreshRooms() // 加入失败（满员/已开局等）：刷新列表去掉失效条目

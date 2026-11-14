@@ -5,6 +5,8 @@
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
     <button class="btn-home" @click.stop="confirmGoHome">‹ 主菜单</button>
+    <!-- 联网模式房间号：左上角小徽标（不遮牌面） -->
+    <view v-if="isNet && roomNum" class="room-badge">房间 {{ roomNum }}</view>
     <!-- 对家（上）：座位按我的座位旋转——每人都看到自己在下方位，相对方位不变，头像颜色对应同一人 -->
     <view id="opp-top-anchor">
       <OpponentZone position="top" :seat="seatAt(2)" :label="labelOf(seatAt(2))" :hand-count="opponentBySeat(seatAt(2)).handCount" :kept-count="opponentBySeat(seatAt(2)).keptCount" :is-leader="view.leaderSeat === seatAt(2)" :last-move="lastMoveOf(seatAt(2))" :discard-history="discardEntries" :reveal-kept="fx.revealKept" />
@@ -155,17 +157,28 @@ const diceRollerSeat = computed(() => unwrap(gameApi.value?.diceRollerSeat, 0))
 const mySeatVal = computed(() => unwrap(gameApi.value?.mySeat, 0))
 // 连接状态（net）：非 open 时顶部显示断线重连条；solo 无此概念，恒 open
 const connection = computed(() => unwrap(gameApi.value?.connection, 'open'))
+// 房间号（net）：game.state 推送携带，左上角徽标显示；solo 无此概念
+const roomNum = computed(() => unwrap(gameApi.value?.roomId, null))
 
 // 结算后回房间：服务器把全员确认（或超时）的 SETTLE 房重置回 WAITING 并广播 room.state。
-// 牌桌页订阅这条推送，收到即整页跳回房间（redirectTo 清掉本页，避免 H5 历史栈残留旧局）。
-// 订阅直接在 setup 里注册（isNet 已由 onLoad 先行置位；uni-app H5 中 onLoad 在组件 setup
-// 阶段即触发，早于本行执行），避免依赖 onMounted——等待 onMounted 期间到达的推送会丢失。
+// 订阅作为兜底保留：点「再来一局」后本地立即跳房（不等广播），但收尾推送仍在途/晚到时
+// （如玩家点了「回主菜单」前广播才到、或 restart 回执丢失），收到 WAITING 推送仍跳回房间。
+// 订阅须在 setup 里无条件注册：uni-app H5 中 onLoad 要等 setup 主体执行完（finishComponentSetup
+// → applyOptions → initHooks）才触发，此处 isNet 必为 false，按模式判断订阅会永远漏注册；
+// isNet 判断移入回调内，非 net 模式直接忽略推送。
 let offRoomState = null
-if (isNet.value) {
+{
   const n = sharedNet()
   offRoomState = n.on('room.state', ({ room }) => {
+    if (!isNet.value) return
     if (!room || room.state !== 'WAITING') return
+    if (roomNum.value && room.roomId !== roomNum.value) return // 非本房间广播（旧房残留推送）
     fx.value.settleShow = false
+    // 跳转前先摘掉本订阅：uni-h5 页面卸载是异步的（onUnmounted 排到渲染队列），
+    // 若不摘，与 room.vue 的 game.state 处理器竞态——本跳转卸载 game 页途中，
+    // 任何在途 SETTLE 态 game.state 快照（reconnect 补发）触发 room.vue 跳牌桌，
+    // 两次 redirectTo 相互取消，表现为「点了再来一局没反应/延迟很久才跳」。
+    offRoomState?.()
     uni.redirectTo({ url: `/pages/room/room?roomId=${room.roomId}` })
   })
   onUnmounted(() => offRoomState?.())
@@ -500,10 +513,24 @@ watch(
 
 async function restart() {
   if (isNet.value) {
-    // 联网局：发 settleContinue 后收起弹窗等服务器；全员确认（或 5s 超时）后服务器把房间
-    // 重置回 WAITING 并广播 room.state，本页的 roomState watch 会统一跳回房间页。
-    await gameApi.value?.restart()
-    fx.value.settleShow = false
+    // 联网局：发 settleContinue，回执成功即本地立即跳回房间页——服务器 settleContinue 已把
+    // 本人置为 ready，房间快照（立即广播/reconnect 握手）到位后座位直接显示「已准备」，
+    // 全员确认（或 5s 超时）后房主即可开局。不再干等服务器广播（体感卡在结算弹窗）。
+    // 跳转挪进宏任务：回执在 WS onmessage 的微任务续体里 resolve，观测到该上下文里
+    // uni-h5 redirectTo 的导航链会与后续微任务竞态（页面不切换）；setTimeout(0) 稳定。
+    // 回执失败或 roomId 缺失则留在结算弹窗（按钮仍可点、可重试），等服务器广播兜底跳转。
+    const res = await gameApi.value?.restart()
+    const rid = roomNum.value
+    if (res && rid != null) {
+      setTimeout(() => {
+        uni.redirectTo({
+          url: `/pages/room/room?roomId=${rid}`,
+          fail: (e) => uni.showToast({ title: '跳转失败：' + (e.errMsg || '未知原因'), icon: 'none' }),
+        })
+      }, 0)
+    } else {
+      console.warn(res ? '[game] settleContinue 已确认但 roomId 缺失' : '[game] settleContinue 未确认', '，留在结算弹窗等服务器广播兜底')
+    }
     return
   }
   // 把上一局赢家写入 storage，useGame 初始化时读取作为下一局掷骰者（连续局规则）。
@@ -566,6 +593,14 @@ function confirmGoHome() {
   font-size: 24rpx; line-height: 1.4; padding: 10rpx 22rpx; margin: 0;
   background: rgba(58, 44, 20, 0.85); color: #b0a685;
   border: 2rpx solid #5a4a32; border-radius: 999rpx;
+}
+/* 左上角房间号徽标：不参与布局（fixed），与右侧主菜单按钮同风格 */
+.room-badge {
+  position: fixed; top: 16rpx; left: 16rpx; z-index: 50;
+  font-size: 24rpx; line-height: 1.4; padding: 10rpx 22rpx;
+  background: rgba(58, 44, 20, 0.85); color: #b0a685;
+  border: 2rpx solid #5a4a32; border-radius: 999rpx;
+  pointer-events: none;
 }
 /* 局末亮牌阶段：各区扣牌翻开后行数变多、整体变高，取消 flex 压缩让内容自然撑高，
    防止窄视口下对手区亮出的牌面底部被裁（页面可自然向下延展） */

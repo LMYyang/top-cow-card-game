@@ -20,11 +20,11 @@ afterAll(async () => {
   ])
 })
 
-function wsUrl() { return `ws://127.0.0.1:${app.httpServer.address().port}` }
+function wsUrl(target = app) { return `ws://127.0.0.1:${target.httpServer.address().port}` }
 
-/** 测试用客户端：收集推送，支持请求-响应 */
-function client() {
-  const ws = new WebSocket(wsUrl())
+/** 测试用客户端：收集推送，支持请求-响应。target 缺省连默认 app，心跳用例传 hbApp */
+function client(target = app) {
+  const ws = new WebSocket(wsUrl(target))
   const inbox = []
   const waiters = []
   ws.on('message', (raw) => {
@@ -168,6 +168,51 @@ describe('server/index.js 消息路由', () => {
     const host = await fullGame()
     const res = await host.request('room.leave')
     expect(res.type).toBe('room.left') // 回执先于 socket 关闭送达
+  })
+})
+
+describe('心跳死链检测（独立 app，短心跳周期）', () => {
+  let hbApp
+  beforeAll(async () => {
+    hbApp = createServerApp(0, { heartbeatMs: 200 })
+    await new Promise((resolve) => {
+      hbApp.httpServer.once('listening', resolve)
+      hbApp.httpServer.listen(hbApp.port)
+    })
+  })
+  afterAll(async () => {
+    for (const cs of hbApp.wss.clients) cs.terminate()
+    await Promise.all([
+      new Promise((resolve) => hbApp.wss.close(resolve)),
+      new Promise((resolve) => hbApp.httpServer.close(resolve)),
+    ])
+  })
+
+  it('客户端断网（流停摆不发 pong）：~2 个心跳周期后连接被清，WAITING 房销毁', async () => {
+    const c = client(hbApp)
+    await c.opened
+    const created = await c.request('room.create', { name: '甲' })
+    expect(created.type).toBe('room.created')
+    const roomId = created.payload.room.roomId
+    expect(hbApp.mgr.rooms.has(roomId)).toBe(true)
+    // 模拟断网/杀进程：暂停底层 TCP 流——客户端收不到 ping 也不回 pong（node ws 不自动回 pong），
+    // 也没有 FIN（'close' 不触发），复现"成员 connected 恒 true、僵尸房常驻"的旧 bug 前置状态
+    c.ws.pause()
+    // 2 个周期（400ms）+ 余量后：死链被 terminate → onConnClose → removeMember → destroyRoom
+    await new Promise((r) => setTimeout(r, 900))
+    expect(hbApp.mgr.rooms.has(roomId)).toBe(false)
+  })
+
+  it('在线客户端不受心跳影响：回 pong 保持连接，房间保留、请求可用', async () => {
+    const c = client(hbApp)
+    c.ws.on('ping', () => c.ws.pong()) // 浏览器/uni 环境自动回 pong，node ws 客户端需手动
+    await c.opened
+    const created = await c.request('room.create', { name: '乙' })
+    const roomId = created.payload.room.roomId
+    await new Promise((r) => setTimeout(r, 900)) // 跨多个心跳周期
+    expect(hbApp.mgr.rooms.has(roomId)).toBe(true)
+    const res = await c.request('session.check', { token: created.payload.token })
+    expect(res.type).toBe('session.check.ok')
   })
 })
 

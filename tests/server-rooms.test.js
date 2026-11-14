@@ -243,6 +243,52 @@ describe('RoomManager 房间流程', () => {
     const gv = mgr.gameView(room, 0)
     expect(gv.names).toMatchObject({ 0: '甲', 1: '乙' })
   })
+
+  it('断线后带旧 token 重新 joinRoom：复用历史座位与 token，不产生重复成员', () => {
+    const c1 = conn('甲')
+    const { room, token: t1 } = mgr.createRoom(c1, '甲')
+    const j = mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    const j2 = mgr.joinRoom(conn('丙'), '丙', room.roomId)
+    // 丙断线（WAITING 房：掉线即移除成员、token 失效）→ 复用路径返回 null，走正常入房
+    mgr.onDisconnect(j2.token)
+    expect(mgr.tryRejoin(conn('丙2'), '丙', j2.token)).toBeNull()
+    expect(room.members.map(m => m.name)).toEqual(['甲', '乙']) // 丙已移除
+    // 乙连接被替换（模拟重连前的旧连接关闭竞态）：token 还在、成员未移除 → 复用历史身份
+    const c2new = conn('乙')
+    const rj = mgr.joinRoom(c2new, '小乙', room.roomId, j.token)
+    expect(rj.error).toBeUndefined()
+    expect(rj.token).toBe(j.token)
+    expect(rj.seat).toBe(j.seat)
+    expect(rj.rejoined).toBe(true)
+    expect(room.members).toHaveLength(2) // 没有第三个座位
+    expect(room.members.filter(m => m.name === '乙' || m.name === '小乙')).toHaveLength(1)
+    expect(room.members.find(m => m.token === j.token).conn).toBe(c2new)
+    expect(room.members.find(m => m.token === j.token).name).toBe('小乙')
+    // 房主对旧 token 踢人等操作仍可用（token 未变）
+    expect(mgr.memberByToken(room, j.token).seat).toBe(j.seat)
+    void t1
+  })
+
+  it('带旧 token 的 tryRejoin：对局中返回 null（走 reconnect 宽限）；gone 成员返回 null', () => {
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    // 对局中：WAITING 校验不通过，复用路径拒绝（仍走 reconnect 通道）
+    expect(mgr.tryRejoin(conn('甲'), '甲', tokens[0])).toBeNull()
+    // WAITING 房成员已 gone：不复用
+    room.game = null
+    const m = room.members.find(mm => mm.token === tokens[1])
+    m.gone = true
+    expect(mgr.tryRejoin(conn('乙'), '乙', tokens[1])).toBeNull()
+  })
+
+  it('tryRejoin 对在线成员幂等：重复请求回原身份不另开座位', () => {
+    const { room, tokens } = fullRoom()
+    const before = room.members.map(m => m.token)
+    const rj = mgr.tryRejoin(conn('乙'), '乙', tokens[1])
+    expect(rj).not.toBeNull()
+    expect(rj.token).toBe(tokens[1])
+    expect(room.members.map(m => m.token)).toEqual(before)
+  })
 })
 
 /** 4 人满员已准备的房间 */
@@ -485,7 +531,7 @@ describe('断线重连与结算', () => {
     expect(mgr.tokens.has(token)).toBe(false)
   })
 
-  it('settleContinue：全员确认后重置回 WAITING 房（真人默认已准备，延迟广播回房推送），由房主再开新局', () => {
+  it('settleContinue：全员确认后重置回 WAITING 房（真人默认已准备，立即广播回房推送），由房主再开新局', () => {
     vi.useFakeTimers()
     const c1 = conn('甲')
     const { room, tokens } = fullRoom()
@@ -505,15 +551,21 @@ describe('断线重连与结算', () => {
       mgr.reconnect(c, m.token)
     })
     conns.forEach((c) => { c.sent.length = 0 })
-    for (const m of room.members) {
-      if (!m.isAI) mgr.gameAction(m.token, 'game.settleContinue', {})
+    // 前 3 名真人确认（未齐）：SETTLE 态立即广播准备状态（先回房者实时看到后来者「已准备」）
+    const first = room.members.filter((m) => !m.isAI).slice(0, 3)
+    for (const m of first) mgr.gameAction(m.token, 'game.settleContinue', {})
+    expect(room.game).not.toBeNull() // 未齐，等最后一人
+    for (const c of conns) {
+      expect(c.sent.some((x) => x.type === 'room.state')).toBe(true) // 每次确认都广播
+      c.sent.length = 0
     }
+    // 最后一人确认：全员齐 → 收尾（对局清空，立即广播回房推送）
+    const last = room.members.find((m) => !m.isAI && !first.includes(m))
+    mgr.gameAction(last.token, 'game.settleContinue', {})
     expect(room.game).toBeNull() // 对局清空 → 派生状态回 WAITING
     expect(mgr.roomStateOf(room)).toBe('WAITING')
     for (const m of room.members) expect(m.ready).toBe(true) // 默认已准备，回房即可开局
-    // 回房推送延迟 1.3s（避开 afterAction 终局亮牌 1.2s 在途推送的竞态）：立即推送还没发
-    expect(conns.every((c) => !c.sent.some((x) => x.type === 'room.state'))).toBe(true)
-    vi.advanceTimersByTime(1300)
+    // 回房推送立即发出（客户端 settleContinue 回执后本地即跳房，延迟推送反而拖慢回房）
     expect(conns.every((c) => c.sent.some((x) => x.type === 'room.state'))).toBe(true)
     vi.useRealTimers()
   })
@@ -529,6 +581,49 @@ describe('断线重连与结算', () => {
     expect(room.game).toBeNull()
     expect(mgr.roomStateOf(room)).toBe('WAITING')
     expect(room.members.every((m) => m.ready)).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it('连续局掷骰者=上局赢家：finishSettle 记 winner 座位，startGame 以其开局', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    // 换成 fake rng 不可行（对局已开）：直接推进到 SETTLE 后读取真实 winner
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    advanceUntilSettle(room)
+    const winner = room.game.result.winner
+    // 广播需要在线连接：全员重连后逐个确认（与 settleContinue 全员确认测试同一套路）
+    const conns = []
+    for (const m of room.members.filter((x) => !x.isAI)) {
+      const c = conn(m.name)
+      conns.push(c)
+      mgr.reconnect(c, m.token)
+    }
+    for (const m of room.members.filter((x) => !x.isAI)) mgr.gameAction(m.token, 'game.settleContinue', {})
+    expect(room.game).toBeNull()
+    expect(room.lastWinnerSeat).toBe(winner) // 收尾记录上局赢家
+    // 再开局：掷骰者=上局赢家（而非房主）
+    mgr.startGame(tokens[0], room.roomId)
+    expect(room.game.rollerSeat).toBe(winner)
+    vi.useRealTimers()
+  })
+
+  it('连续局掷骰者回退：上局赢家已不在房（掉线移除）时由房主掷骰', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    mgr.startGame(tokens[0], room.roomId)
+    for (const m of room.members) mgr.onDisconnect(m.token)
+    advanceUntilSettle(room)
+    const winner = room.game.result.winner
+    room.lastWinnerSeat = winner // 模拟上局收尾记录
+    room.game = null
+    room.settleAck = new Set()
+    room.settleTimer = null
+    // 赢家座位成员被移除（模拟掉线清理），仍留在房里的座位照旧
+    room.members = room.members.filter((m) => m.seat !== winner)
+    mgr.startGame(tokens[0], room.roomId)
+    expect(room.game.rollerSeat).not.toBe(winner)
+    expect(room.game.rollerSeat).toBe(room.members.find((m) => m.isHost).seat)
     vi.useRealTimers()
   })
 
@@ -556,6 +651,32 @@ describe('断线重连与结算', () => {
     room.lastActiveAt = 1000 - 5 * 60_000 // 5 分钟无任何活动
     mgr.sweep()
     expect(mgr.rooms.has(room.roomId)).toBe(false) // 长时间无反应：销毁
+  })
+
+  it('sweep：WAITING 房主掉线（在线成员无房主）→ 下一位真人继承房主（免准备），房间保留', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    const j = mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    // 房主甲连接断开但未走 onDisconnect（模拟心跳清理前的僵尸态：connected 恒 true 属旧 bug，
+    // 这里直接改状态模拟"心跳已判定房主死链、成员被移除后继任缺失"的兜底入口）
+    room.members = room.members.filter((m) => m !== room.members.find((mm) => mm.token === token))
+    mgr.sweep()
+    expect(mgr.rooms.has(room.roomId)).toBe(true) // 还有真人乙：房间保留
+    const host = room.members.find((m) => m.isHost)
+    expect(host.token).toBe(j.token) // 乙继承房主
+    expect(host.ready).toBe(true) // 继任房主免准备
+    void c1
+  })
+
+  it('sweep：WAITING 房仅剩 AI/无人可继任 → 销毁房间', () => {
+    const c = conn('甲')
+    const { room } = mgr.createRoom(c, '甲')
+    // 模拟唯一真人（房主甲）被移除后房里只剩一个 AI 占位（极端时序）
+    room.members = room.members.filter((m) => m.isAI) // 移除真人甲
+    room.members.push({ seat: 0, token: null, name: 'AI·小牛0', connected: true, gone: false, ready: true, isHost: true, isAI: true, conn: null, graceTimer: null, aiTimer: null })
+    mgr.sweep()
+    expect(mgr.rooms.has(room.roomId)).toBe(false) // 没有真人能主持：销毁
+    void c
   })
 
   it('sweep：WAITING 房内成员进出会刷新 lastActiveAt，不因房龄被误杀', () => {

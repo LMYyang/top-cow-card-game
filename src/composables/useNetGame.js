@@ -107,6 +107,7 @@ export function useNetGame(net = sharedNet()) {
   async function restart() {
     const res = await call('game.settleContinue', {})
     if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    return res.ok // 调用方据此决定是否立即跳回房间页
   }
 
   /** 退房：结算页回主菜单前调用；对局中服务器视为断线（宽限+托管），WAITING 中直接移除 */

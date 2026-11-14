@@ -52,6 +52,8 @@ const resumeGame = () => uni.redirectTo({ url: '/pages/game/game?mode=net' })
 
 /**
  * 进入房间的统一出口：建连 → 持久化昵称 → 发起入房请求。
+ * 请求携带本地旧 token：断线后重进时服务器按 token 复用历史座位，
+ * 避免"原成员残留 + 新座位并存"出现两个自己。
  * 服务器错误回执与连接失败（reject）都走 toast；成功后存 token 并跳房间页。
  */
 async function enter(requestFn, payload) {
@@ -59,7 +61,8 @@ async function enter(requestFn, payload) {
   try {
     if (net.status.value !== 'open') await net.connect()
     uni.setStorageSync('dingniuzi_player_name', name.value)
-    const res = await net.request(requestFn, { name: name.value, ...payload })
+    const oldToken = uni.getStorageSync('dingniuzi_player_token')
+    const res = await net.request(requestFn, { name: name.value, token: oldToken || '', ...payload })
     if (res.type === 'error') {
       uni.showToast({ title: res.payload.message, icon: 'none' })
       return

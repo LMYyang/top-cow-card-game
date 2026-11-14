@@ -108,8 +108,12 @@ export class RoomManager {
     }
   }
 
-  /** 销毁房间：清空 token 索引、成员连接引用与未决的对局编排定时器 */
-  destroyRoom(roomId) {
+  /** 房间内是否有真人房主在线（AI 不会点开局，AI 座位挂房主等于无人主持） */
+  hasLiveHost(room) {
+    return room.members.some((m) => m.isHost && !m.isAI && m.connected && !m.gone)
+  }
+
+  /** 销毁房间：清空 token 索引、成员连接引用与未决的对局编排定时器 */  destroyRoom(roomId) {
     const room = this.rooms.get(roomId)
     if (!room) return
     for (const m of room.members) {
@@ -122,7 +126,7 @@ export class RoomManager {
     this.rooms.delete(roomId)
   }
 
-  createRoom(conn, name) {
+  createRoom(conn, name, oldToken = '') {
     const existing = this.findMemberByConn(conn)
     if (existing && this.roomStateOf(existing.room) !== 'WAITING') {
       // 对局进行中的旧成员身份不能丢弃（否则其他 3 人局面卡死）：拒绝换房
@@ -135,10 +139,30 @@ export class RoomManager {
       this.pushRoomState(existing.room)
       return { room: existing.room, token: existing.member.token, seat: existing.member.seat, rejoined: true }
     }
+    // 客户端带着旧 token 来（断线后重开页面/重试）：若该 token 仍挂在 WAITING 房且已掉线，
+    // 复用历史身份回到原房原座位，不再另开新屋（否则原成员残留 + 新座位并存，界面出现两个"自己"）
+    const rejoined = this.tryRejoin(conn, name, oldToken)
+    if (rejoined) return rejoined
+    // lastWinnerSeat/lastWinnerToken：上局赢家（连续局掷骰者），随 finishSettle 写入；新局无记录
     const roomId = this.newRoomId()
-    const room = { roomId, members: [], game: null, createdAt: this.now(), lastActiveAt: this.now() }
+    const room = { roomId, members: [], game: null, createdAt: this.now(), lastActiveAt: this.now(), lastWinnerSeat: undefined, lastWinnerToken: undefined }
     this.rooms.set(roomId, room)
     return this.joinRoom(conn, name, roomId)
+  }
+
+  /**
+   * 断线重入（带旧 token 入房/建房/匹配时）：token 仍在索引中且成员未标记 gone
+   * （WAITING 房掉线即移除成员，token 还在说明只是连接替换前的短暂窗口或对局房宽限期内）。
+   * - 对局中/已 gone：返回 null，调用方走正常入房或 reconnect 流程；
+   * - WAITING 在线成员：视为重复请求，直接回原身份（幂等，不开新座位）。
+   */
+  tryRejoin(conn, name, oldToken) {
+    if (!oldToken) return null
+    const room = this.roomOf(oldToken)
+    if (!room || this.roomStateOf(room) !== 'WAITING') return null
+    const existing = this.memberByToken(room, oldToken)
+    if (!existing || existing.isAI || existing.gone) return null
+    return this.rejoinRoom(conn, name, room.roomId, oldToken)
   }
 
   newRoomId() {
@@ -148,10 +172,37 @@ export class RoomManager {
     }
   }
 
-  joinRoom(conn, name, roomId) {
+  /**
+   * 重入房间（客户端带 token 请求入房时）：同一 token 的 WAITING 成员直接复用历史身份
+   * （座位/房主/准备状态不变），仅换绑连接与昵称。避免断线后重新 joinRoom 在原成员
+   * 尚未移除时再挤进一个同名新座位（界面出现两个"自己"）。
+   * 仅 WAITING 房适用；对局房仍走 reconnect 宽限通道，不在此处理。
+   */
+  rejoinRoom(conn, name, roomId, oldToken) {
+    const room = this.rooms.get(roomId)
+    if (!room) return null
+    if (this.roomStateOf(room) !== 'WAITING') return null
+    const existing = oldToken ? this.memberByToken(room, oldToken) : null
+    if (!existing || existing.isAI) return null
+    // 原座位被 AI 占用（旧成员掉线后被 fillWithAI 补位且又回到 WAITING 的极端时序）：无法复用
+    if (room.members.some((m) => m !== existing && m.seat === existing.seat)) return null
+    if (existing.graceTimer) { clearTimeout(existing.graceTimer); existing.graceTimer = null }
+    existing.name = name
+    existing.connected = true
+    if (existing.conn && existing.conn !== conn) { try { existing.conn.close() } catch { /* 旧连接已死 */ } }
+    existing.conn = conn
+    room.lastActiveAt = this.now()
+    this.pushRoomState(room)
+    return { room, token: existing.token, seat: existing.seat, rejoined: true }
+  }
+
+  joinRoom(conn, name, roomId, oldToken = '') {
     const room = this.rooms.get(roomId)
     if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在或已解散' } }
     if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局已开始，无法加入' } }
+    // 带旧 token 且正是本房成员：复用历史身份回原座位（断线重进不再挤出新座位）
+    const rejoined = this.tryRejoin(conn, name, oldToken)
+    if (rejoined && rejoined.room === room) return rejoined
     const seat = this.firstVacantSeat(room)
     if (seat === -1) return { error: { code: 'ROOM_FULL', message: '房间已满' } }
     // 校验全部通过后才处理旧成员身份：避免"先移除后校验失败"导致玩家凭空掉出房间
@@ -173,7 +224,10 @@ export class RoomManager {
     return { room, token, seat }
   }
 
-  quickMatch(conn, name) {
+  quickMatch(conn, name, oldToken = '') {
+    // 带旧 token 且旧身份有效：直接回原房（快速匹配的幂等重试）
+    const rejoined = this.tryRejoin(conn, name, oldToken)
+    if (rejoined) return rejoined
     const candidates = [...this.rooms.values()]
       .filter((r) => this.roomStateOf(r) === 'WAITING' && this.firstVacantSeat(r) !== -1)
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -247,7 +301,16 @@ export class RoomManager {
     const check = this.canStart(room)
     if (!check.ok) return { error: { code: 'CANNOT_START', message: check.message } }
     this.pushRoomState(room) // 房间页立即看到 AI 座位就位
-    this.beginRound(room, me.seat) // 首局掷骰者=房主座位
+    // 连续局规则：掷骰者=上局赢家。按成员身份核对：真人 token 匹配、或 AI 赢家座位仍由 AI 占据
+    // （finishSettle 移除 AI、开局 fillWithAI 会在同座位重补，视为同一家继续掷）；找不到则回退房主
+    let roller = null
+    if (room.lastWinnerToken === null) {
+      const m = room.members.find((x) => x.seat === room.lastWinnerSeat)
+      if (m && m.isAI) roller = m
+    } else {
+      roller = room.members.find((x) => x.token === room.lastWinnerToken) || null
+    }
+    this.beginRound(room, roller ? roller.seat : me.seat)
     return { ok: true }
   }
 
@@ -292,8 +355,15 @@ export class RoomManager {
       return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } } // 协议层校验，不依赖对局状态
     }
     const g = room.game
-    if (!g) return { error: { code: 'NO_GAME', message: '对局未开始' } }
-
+    if (!g) {
+      // 结算收尾后重复点「再来一局」（room.game 已清）：幂等返回成功并补发房间快照，不报
+      // 「对局未开始」（否则玩家被错误提示困在结算界面）
+      if (type === 'game.settleContinue' && this.rooms.get(room.roomId) === room) {
+        if (me.conn) me.conn.send({ type: 'room.state', payload: { room: this.roomState(room) } })
+        return { ok: true }
+      }
+      return { error: { code: 'NO_GAME', message: '对局未开始' } }
+    }
     if (type === 'game.roll') {
       if (g.state !== 'ROLLING') return { error: { code: 'BAD_STATE', message: '当前不可掷骰' } }
       if (g.rollerSeat !== me.seat) return { error: { code: 'NOT_YOUR_TURN', message: '不是你的掷骰权' } }
@@ -568,7 +638,9 @@ export class RoomManager {
    *  - WAITING 房：空房立即销毁（removeMember 已兜底，这里兜漏网）；有成员但全员掉线的僵尸房
    *    在掉线即移除策略下只会出现在极端时序，同样按「无人在线」销毁；
    *  - WAITING 房长时间无任何活动（成员进出/状态变更超过 ROOM_IDLE_MS）销毁——
-   *    防止有人挂着不动的死房长期占用房间号、出现在列表里。
+   *    防止有人挂着不动的死房长期占用房间号、出现在列表里；
+   *  - WAITING 房无在线房主（房主掉线残留/心跳刚清、继任未定）立即改选：下一位真人为房主，
+   *    没有真人成员则销毁——否则房主不在没人能开局，房间永远挂在列表里。
    *  对局中掉线成员保留 60s 宽限（GRACE_MS）供重连，不受 ROOM_IDLE_MS 影响（lastActiveAt 仅记 WAITING 活动）。 */
   sweep() {
     for (const room of [...this.rooms.values()]) {
@@ -582,6 +654,16 @@ export class RoomManager {
       if (!alive) {
         this.destroyRoom(room.roomId)
         continue
+      }
+      // 房主缺席（掉线/被心跳清掉）而房里还有人：立即换主持，别让死房挂着等人开局
+      if (!this.hasLiveHost(room)) {
+        const humans = room.members.filter((m) => !m.isAI)
+        if (humans.length === 0) {
+          this.destroyRoom(room.roomId)
+          continue
+        }
+        this.promoteHost(room)
+        this.pushRoomState(room)
       }
       // WAITING 且仍有人在线：长时间无活动（无人进出/无准备等状态变更）视为弃置房
       if (this.now() - (room.lastActiveAt ?? room.createdAt) >= ROOM_IDLE_MS) {
@@ -598,12 +680,18 @@ export class RoomManager {
   settleContinue(room, me) {
     if (!room.game || room.game.state !== 'SETTLE') return { error: { code: 'BAD_STATE', message: '非结算阶段' } }
     room.settleAck.add(me.seat)
+    // 点击即视为准备：客户端 ack 后立即回房，座位直接显示「已准备」（finishSettle 会再统一置位）
+    me.ready = true
     const active = room.members.filter((m) => !m.gone && !m.isAI).length
     if (active === 0 || room.settleAck.size >= active) {
       this.finishSettle(room)
-    } else if (!room.settleTimer) {
-      room.settleTimer = setTimeout(() => this.finishSettle(room), 5000)
-      room.timers.add(room.settleTimer)
+    } else {
+      if (!room.settleTimer) {
+        room.settleTimer = setTimeout(() => this.finishSettle(room), 5000)
+        room.timers.add(room.settleTimer)
+      }
+      // 广播准备状态：先回房的玩家实时看到后来者座位翻成「已准备」（SETTLE 态推送对各端无害）
+      this.pushRoomState(room)
     }
     return { ok: true }
   }
@@ -616,6 +704,12 @@ export class RoomManager {
       room.settleTimer = null
     }
     if (!room.game || room.game.state !== 'SETTLE') return
+    // 连续局规则：下一局掷骰者=上局赢家。按成员身份（token/AI）记录而非裸座位号：
+    // 收尾会移除 AI/掉线成员，空座位随后可能被别的真人坐进或 fillWithAI 补 AI，
+    // 只认座位会让"没赢过的人"获得掷骰权。token=null 表示赢家是 AI（座位重补后 AI 继续掷）。
+    const winnerMember = room.members.find((m) => m.seat === room.game.result?.winner)
+    room.lastWinnerSeat = winnerMember ? winnerMember.seat : undefined
+    room.lastWinnerToken = winnerMember ? winnerMember.token : null
     room.game = null
     room.settleAck = new Set()
     room.lastActiveAt = this.now()
@@ -632,14 +726,9 @@ export class RoomManager {
     }
     if (!room.members.some((m) => m.isHost)) this.promoteHost(room)
     for (const m of room.members) m.ready = true // 默认已准备：回房即可再开
-    // 延迟推送：终局时 afterAction 有一个 1.2s 后的 revealKept 快照在途，立即广播 room.state
-    // 可能先于它到达——客户端跳回房间页后又收到旧局 game.state，若恰好处于重连窗口会被
-    // 旧局视图顶掉房间快照。等亮牌推送落地后再通知回房。
-    const t = setTimeout(() => {
-      room.timers.delete(t)
-      if (this.rooms.get(room.roomId) !== room || room.game !== null) return
-      this.pushRoomState(room)
-    }, 1300)
-    room.timers.add(t)
+    // 立即广播回房：settleContinue 点击即置 ready，客户端回执后本地也立即跳房，无需等延迟推送。
+    // 亮牌推送（afterAction 的 1.2s revealKept）只发 game.state，客户端跳回房间页后 room.vue
+    // 只响应 ROLLING/PLAYING 的 game.state，SETTLE 旧局快照不会再把玩家弹回牌桌，无竞态。
+    this.pushRoomState(room)
   }
 }

@@ -29,6 +29,7 @@ function wsUrl() { return `ws://127.0.0.1:${app.httpServer.address().port}` }
 
 function client() {
   const ws = new WebSocket(wsUrl())
+  ws.on('ping', () => ws.pong()) // 服务端心跳：node ws 客户端需手动回 pong（浏览器自动）
   const inbox = []
   const waiters = []
   ws.on('message', (raw) => {

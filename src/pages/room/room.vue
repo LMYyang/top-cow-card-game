@@ -3,7 +3,7 @@
   <view class="room">
     <view class="head">
       <text class="room-id">房间号 {{ roomId }}</text>
-      <text class="hint">房主免准备可随时开局，其余玩家需点准备，空位自动补 AI 代打</text>
+      <text class="hint">全员准备后开局，空位自动补 AI</text>
     </view>
     <view class="seats">
       <view
@@ -13,7 +13,7 @@
         :class="{ me: seat === mySeat, taken: !!memberOf(seat), host: memberOf(seat)?.isHost }"
         @click="tapSeat(seat)"
       >
-        <text class="seat-no">{{ seat + 1 }}号位</text>
+        <text class="seat-no">{{ seat + 1 }}号位{{ seat === mySeat ? '（我）' : '' }}</text>
         <!-- 右上角同一位置互斥显示：房主座位显示「✦ 房主」，其余真人座位在房主视角下显示「移出」 -->
         <view v-if="memberOf(seat)?.isHost" class="host-badge">
           <text class="host-badge-star">✦</text>
@@ -75,6 +75,9 @@ const offRoom = net.on('room.state', ({ room: r }) => {
   roomId.value = r.roomId
   // 结算回房再开局：本页可能复用实例（H5 redirectTo 后 uni-app 页面栈复用），重置开局跳转闸门
   if (r.state === 'WAITING') redirected.value = false
+  // 推送不携带 token 无法定位自己：mySeat 为 null（重连握手未回/回执竞态丢失）时补拉快照，
+  // 否则座位区无「（我）」标记、我的准备按钮不渲染，后续开局也易踩 NOT_IN_ROOM
+  if (r.state === 'WAITING' && mySeat.value === null) restoreSession()
 })
 // 被房主移出：清 token 回大厅（token 已被服务器删除，留着只会误导重连）
 const offKicked = net.on('kicked', () => {
@@ -89,7 +92,12 @@ const offPoke = net.on('poke', ({ message }) => {
   pokeMessage.value = message || '房主提醒你准备'
   pokeShow.value = true
 })
-const offStart = net.on('game.state', () => {
+const offStart = net.on('game.state', ({ view }) => {
+  // 只对真正开新局（ROLLING/PLAYING）跳牌桌。SETTLE 态的 game.state 必须忽略：
+  // 点「再来一局」本地跳回房间后，对局尚未收尾（其他真人未确认/5s 超时未到），
+  // restoreSession 的 reconnect 快照会补发 SETTLE 态 game.state——若响应它会把玩家
+  // 立刻弹回结算界面，表现为「点了再来一局没跳转，几秒后才跳走」。
+  if (!view || (view.state !== 'ROLLING' && view.state !== 'PLAYING')) return
   if (redirected.value) return
   redirected.value = true
   // 服务器开局推送 game.state → 跳牌桌（net 模式，Task 8 接入）
@@ -173,26 +181,36 @@ async function leave() {
 
 /**
  * 恢复会话：用 token 重连拿房间快照 + 自己座位（页面跳转/刷新后状态不丢）。
- * onLoad 与「断线自动重连成功」两个入口共用；失败（房间已解散/token 失效）回大厅。
+ * onLoad、「断线自动重连成功」与「WAITING 推送时 mySeat 缺失兜底」三个入口共用；
+ * 重入保护：reconnect 握手会先回 room.state 再回 reconnected 回执，推送处理器可能在
+ * 回执落地前再次触发本函数，不挡会多打一轮冗余重连。
+ * 失败（房间已解散/token 失效）回大厅。
  */
+let restoring = false
 async function restoreSession() {
-  const token = uni.getStorageSync('dingniuzi_player_token')
-  if (!token) { uni.reLaunch({ url: '/pages/lobby/lobby' }); return }
+  if (restoring) return
+  restoring = true
   try {
-    if (net.status.value !== 'open') await net.connect()
-    const res = await net.request('reconnect', { token })
-    if (res.type === 'error') {
-      uni.removeStorageSync('dingniuzi_player_token') // 房间已解散等：token 失效，清理
+    const token = uni.getStorageSync('dingniuzi_player_token')
+    if (!token) { uni.reLaunch({ url: '/pages/lobby/lobby' }); return }
+    try {
+      if (net.status.value !== 'open') await net.connect()
+      const res = await net.request('reconnect', { token })
+      if (res.type === 'error') {
+        uni.removeStorageSync('dingniuzi_player_token') // 房间已解散等：token 失效，清理
+        uni.reLaunch({ url: '/pages/lobby/lobby' })
+        return
+      }
+      room.value = res.payload.room
+      mySeat.value = res.payload.yourSeat
+      roomId.value = res.payload.room.roomId
+    } catch (e) {
+      uni.showToast({ title: e.message || '连接失败', icon: 'none' })
+      // 首连失败/握手超时：页面无快照不可用，回大厅（与 error 回执路径同样兜底）
       uni.reLaunch({ url: '/pages/lobby/lobby' })
-      return
     }
-    room.value = res.payload.room
-    mySeat.value = res.payload.yourSeat
-    roomId.value = res.payload.room.roomId
-  } catch (e) {
-    uni.showToast({ title: e.message || '连接失败', icon: 'none' })
-    // 首连失败/握手超时：页面无快照不可用，回大厅（与 error 回执路径同样兜底）
-    uni.reLaunch({ url: '/pages/lobby/lobby' })
+  } finally {
+    restoring = false
   }
 }
 
