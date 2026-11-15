@@ -35,6 +35,8 @@
           <view class="turn-hint">
             {{ turnText }}
           </view>
+          <!-- 申请重新发牌：发牌后、首出前且我满足牌型时显示（solo/net 双模式） -->
+          <button v-if="canRedealNow" class="btn-primary btn-redeal" :disabled="redealBusy" @click="onRedeal">申请重新发牌</button>
         </template>
         <template v-else-if="view.state === 'SETTLE'">
           <TableTimeline :history="view.tableHistory" />
@@ -159,8 +161,12 @@ const fx = computed(() => unwrap(gameApi.value?.fx, emptyFx()))
 const myTurn = computed(() => unwrap(gameApi.value?.myTurn, false))
 const mustDiscard = computed(() => unwrap(gameApi.value?.mustDiscard, false))
 const playableIds = computed(() => unwrap(gameApi.value?.playableIds, []))
-// 掷骰权座位：net 下以服务器 view.rollerSeat 为准（useNetGame 已聚合）；solo 恒为 0
-const diceRollerSeat = computed(() => unwrap(gameApi.value?.diceRollerSeat, 0))
+// 掷骰权座位：以响应式 view.rollerSeat 为准（solo 的 diceRollerSeat 导出是 init 时常量，
+// 重发后 rollerSeat 变化不会反映，掷骰按钮会错显/漏显）；view.rollerSeat 为空时回退
+// composable 导出（net 未开局回退我的座位，solo 兜底 0）
+const diceRollerSeat = computed(() => view.value.rollerSeat ?? unwrap(gameApi.value?.diceRollerSeat, 0))
+// 申请重新发牌（双模式）：solo/net 均导出 canRedealNow（ComputedRef），isRef 区分后统一解包
+const canRedealNow = computed(() => unwrap(gameApi.value?.canRedealNow, false))
 const mySeatVal = computed(() => unwrap(gameApi.value?.mySeat, 0))
 // 连接状态（net）：非 open 时顶部显示断线重连条；solo 无此概念，恒 open
 const connection = computed(() => unwrap(gameApi.value?.connection, 'open'))
@@ -221,6 +227,19 @@ async function myDiscard(tileId) {
   if (res?.ok) selectedId.value = null
   else uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
 }
+/** 申请重新发牌（双模式代理）：solo 同步返回对象 / net 为 async 请求，await 兼容两者；
+ *  成功后状态回 ROLLING（复位见 state watch）；失败 toast 服务器/核心原因 */
+const redealBusy = ref(false)
+async function onRedeal() {
+  if (redealBusy.value) return
+  redealBusy.value = true
+  try {
+    const res = await gameApi.value?.redeal()
+    if (res && !res.ok) uni.showToast({ title: res.reason || '申请失败', icon: 'none' })
+  } finally {
+    redealBusy.value = false
+  }
+}
 
 const DICE_FACES = { 1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅' }
 // 掷骰动画期间骰面快速随机跳动（初始/落定后显示 fx.dice，动画期间随机）
@@ -250,6 +269,24 @@ watch(
     fx.value.revealKept = false
     fx.value.settleShow = false
     fx.value.lastMove = null
+  }
+)
+// 重发复位：redeal 使状态 PLAYING→ROLLING，若掷骰权恰好回到原掷骰者，上面的 rollerSeat
+// watch 不触发，上一局的揭示文案/回弹/终局节奏残留会顶掉掷骰按钮（卡死）。按 state 翻转
+// 统一复位，复位项与 rollerSeat watch 完全一致（双触发时幂等，无害）
+watch(
+  () => view.value.state,
+  (state, old) => {
+    if (state === 'ROLLING' && old === 'PLAYING') {
+      clearTimers()
+      diceLanded.value = false
+      leaderRevealed.value = false
+      randomFace.value = 1 + Math.floor(Math.random() * 6)
+      settleBrief.value = false
+      fx.value.revealKept = false
+      fx.value.settleShow = false
+      fx.value.lastMove = null
+    }
   }
 )
 const diceResultText = computed(() => {
@@ -667,6 +704,13 @@ function confirmGoHome() {
   to   { opacity: 1; transform: translateY(0); }
 }
 .table-empty, .turn-hint, .settle-brief { color: #b0a685; font-size: 26rpx; margin: 20rpx 0; }
+/* 申请重新发牌：小号主按钮（与全局 .btn-primary 组合出主色小按钮），居中，位于回合提示下方 */
+.btn-redeal {
+  margin: 12rpx auto 0;
+  font-size: 26rpx;
+  padding: 10rpx 30rpx;
+  line-height: 1.5;
+}
 
 .settle-overlay {
   position: fixed; inset: 0;
