@@ -70,7 +70,7 @@ export function redeal(g, seat)  // → { ok, reason? }
 
 - `gameAction` 协议层新增 `game.redeal`：校验身份（真人 token、非托管）后委托 core `redeal(g, me.seat)`；失败按既有 `{ error: { code, message } }` 回执
 - 成功后：`pushRoomState` + `pushGameState`（各端状态回 ROLLING）+ 广播 `game.redealt { seat }`（客户端 toast）
-- **AI/托管座位自动申请**：`beginRound` 完成发牌与 `scheduleDice` 落定进 PLAYING 后，检查 AI/托管座位手牌；满足条件且无真人满足时，1.2s 后代为申请（复用 `gameAction` 内部路径，非真人 token 旁路身份校验）；真人座位满足条件时不动，等玩家自己点
+- **AI/托管座位自动申请**：`scheduleDice` 落定进 PLAYING 后，以及 `enableAiControl`（窗口内掉线进托管）时，检查 AI/托管座位手牌；满足条件且无真人满足时，1.2s 后代为申请（定时回调内重扫全部 AI/托管座位并复核手牌/次数/窗口；真人座位满足条件时不动，等玩家自己点）
 - **AI 首出延时**：`scheduleAiTurn` 中 `openEnds === null` 分支延时改为 2000–2800ms，与单机一致
 - 重发后 `maybeAutoRoll` 既有逻辑已覆盖「roller 为 AI/托管时自动掷」，无需改动
 
