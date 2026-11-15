@@ -1,5 +1,5 @@
 import { dealGroups } from './deck.js'
-import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, diceToSeatOffset, settle } from './rules.js'
+import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, diceToSeatOffset, settle, canRedeal } from './rules.js'
 
 /**
  * 游戏状态机（纯 JS、平台无关、可变状态对象）。
@@ -22,6 +22,7 @@ export function createGame(rng = Math.random, rollerSeat = 0) {
     players: [0, 1, 2, 3].map((seat) => ({ seat, hand: [], kept: [] })),
     currentSeat: null,
     result: null,
+    redealUsed: new Set(), // 本局已申请过重新发牌的座位（每人每局 1 次，防死循环）
   }
 }
 
@@ -50,6 +51,27 @@ export function rollDice(g, dice) {
   g.openEnds = null
   g.state = 'PLAYING'
   return { ok: true, leaderSeat }
+}
+
+/**
+ * 申请重新发牌：手牌满足 canRedeal 且尚无人出牌时，重置牌局并由申请人掷骰。
+ * 每人每局限 1 次（redealUsed 按座位记录，重发后其余座位仍可各申请一次）。
+ */
+export function redeal(g, seat) {
+  if (g.state !== 'PLAYING') return { ok: false, reason: '当前不可申请重新发牌' }
+  if (g.tableHistory.length > 0) return { ok: false, reason: '已开始出牌，不能再申请重新发牌' }
+  if (g.redealUsed.has(seat)) return { ok: false, reason: '本局已申请过重新发牌' }
+  if (!canRedeal(g.players[seat].hand)) return { ok: false, reason: '手牌不满足重新发牌条件' }
+  g.players.forEach((p) => { p.hand = []; p.kept = [] })
+  g.tableTile = null
+  g.openEnds = null
+  g.tableHistory = []
+  g.leaderSeat = null
+  g.currentSeat = null
+  g.rollerSeat = seat // 申请人打骰
+  g.redealUsed.add(seat)
+  g.state = 'ROLLING'
+  return { ok: true }
 }
 
 function advanceTurn(g) {
@@ -171,5 +193,6 @@ export function viewOf(g, viewerSeat) {
       .map((p) => ({ seat: p.seat, handCount: p.hand.length, keptCount: p.kept.length })),
     result: g.result,
     tableHistory: g.tableHistory,
+    redealUsed: [...g.redealUsed],
   }
 }

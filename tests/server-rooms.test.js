@@ -239,7 +239,7 @@ describe('RoomManager 房间流程', () => {
   it('gameView 携带成员昵称表 names（seat→name，供客户端 labelOf）', () => {
     const { room } = mgr.createRoom(conn('甲'), '甲')
     mgr.joinRoom(conn('乙'), '乙', room.roomId)
-    room.game = { state: 'PLAYING', players: [0, 1].map((seat) => ({ seat, hand: [], kept: [] })), tableTile: null, openEnds: null, tableHistory: [], result: null, leaderSeat: null, rollerSeat: null, currentSeat: null }
+    room.game = { state: 'PLAYING', players: [0, 1].map((seat) => ({ seat, hand: [], kept: [] })), tableTile: null, openEnds: null, tableHistory: [], result: null, leaderSeat: null, rollerSeat: null, currentSeat: null, redealUsed: new Set() }
     const gv = mgr.gameView(room, 0)
     expect(gv.names).toMatchObject({ 0: '甲', 1: '乙' })
   })

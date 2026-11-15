@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds } from '../src/core/game.js'
+import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds, redeal } from '../src/core/game.js'
 import { mulberry32 } from '../src/core/deck.js'
+import { tile } from './helpers.js'
 
 function startGame(seed = 42, dice = 3) {
   const g = createGame(mulberry32(seed))
   const res = rollDice(g, dice)
   return { g, res }
+}
+
+/** 强制把某座位手牌替换为给定牌组（测试 canRedeal 用，绕过随机发牌） */
+function forceHand(g, seat, tiles) {
+  g.players[seat].hand = [...tiles]
 }
 
 /** 取头牌当前合法首出牌（不拉三家约束下） */
@@ -269,5 +275,96 @@ describe('双出红八校验', () => {
     expect(g.players[0].hand.map(t => t.id)).toEqual(handBefore.map(t => t.id))
     expect(g.tableTile).toBe(null)
     expect(g.tableHistory.length).toBe(0)
+  })
+})
+
+describe('redeal 申请重新发牌', () => {
+  it('窗口内满足条件：重置牌局、掷骰权移交申请人、状态回 ROLLING', () => {
+    const { g } = startGame(42, 3) // 头牌 seat 2
+    const applicant = 1 // 非头牌也可申请
+    forceHand(g, applicant, [
+      tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1'),
+    ])
+    const res = redeal(g, applicant)
+    expect(res.ok).toBe(true)
+    expect(g.state).toBe('ROLLING')
+    expect(g.rollerSeat).toBe(applicant) // 申请人打骰
+    expect(g.players.every((p) => p.hand.length === 0)).toBe(true) // 四家手牌清空
+    expect(g.openEnds).toBe(null)
+    expect(g.tableHistory).toHaveLength(0)
+    expect(g.tableTile).toBe(null)
+    expect(g.redealUsed.has(applicant)).toBe(true)
+  })
+
+  it('重发后可正常掷骰开局（rollerSeat=申请人）', () => {
+    const { g } = startGame(42, 3)
+    const applicant = 1
+    forceHand(g, applicant, [
+      tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1'),
+    ])
+    expect(redeal(g, applicant).ok).toBe(true)
+    const res = rollDice(g, 1) // 1 → 掷骰者自己 = applicant 头牌
+    expect(res.ok).toBe(true)
+    expect(g.state).toBe('PLAYING')
+    expect(g.leaderSeat).toBe(applicant)
+    expect(g.players.every((p) => p.hand.length === 6)).toBe(true)
+  })
+
+  it('已出牌（tableHistory 非空）申请被拒', () => {
+    const { g } = startGame(42, 3)
+    const legal = require_legal_lead_tile(g)
+    expect(play(g, g.leaderSeat, [legal.id]).ok).toBe(true)
+    forceHand(g, 0, [
+      tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1'),
+    ])
+    const res = redeal(g, 0)
+    expect(res.ok).toBe(false)
+    expect(g.state).toBe('PLAYING') // 状态不变
+  })
+
+  it('牌型不满足申请被拒', () => {
+    const { g } = startGame(42, 3)
+    // 两红八 + 红十（不满足）
+    forceHand(g, 0, [
+      tile('t5-1'), tile('t5-2'), tile('t4-1'), tile('t1-1'), tile('t2-1'), tile('t3-1'),
+    ])
+    const res = redeal(g, 0)
+    expect(res.ok).toBe(false)
+    expect(g.state).toBe('PLAYING')
+    expect(g.players[0].hand).toHaveLength(6) // 手牌未被清空
+  })
+
+  it('同一座位重复申请被拒；不同座位各自可申请一次', () => {
+    const { g } = startGame(42, 3)
+    const hand = [
+      tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1'),
+    ]
+    forceHand(g, 0, hand)
+    expect(redeal(g, 0).ok).toBe(true)
+    // 申请人重发后手牌已清空，重新注入满足牌的手牌模拟"新牌仍满足"的场景
+    forceHand(g, 0, hand)
+    expect(redeal(g, 0).ok).toBe(false) // 本局已申请过
+    expect(g.state).toBe('ROLLING')
+    // 换个座位：先掷骰回 PLAYING，另一座位首次申请应成功
+    expect(rollDice(g, 1).ok).toBe(true)
+    forceHand(g, 2, hand)
+    expect(redeal(g, 2).ok).toBe(true)
+    expect(g.rollerSeat).toBe(2)
+  })
+
+  it('ROLLING 状态申请被拒（未发牌）', () => {
+    const g = createGame(mulberry32(42))
+    const res = redeal(g, 0)
+    expect(res.ok).toBe(false)
+  })
+
+  it('viewOf 输出 redealUsed（数组形态）', () => {
+    const { g } = startGame(42, 3)
+    forceHand(g, 1, [
+      tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1'),
+    ])
+    expect(redeal(g, 1).ok).toBe(true)
+    const v = viewOf(g, 0)
+    expect(v.redealUsed).toEqual([1])
   })
 })
