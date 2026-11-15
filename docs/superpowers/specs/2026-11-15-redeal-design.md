@@ -27,7 +27,7 @@
 ### 2.2 申请窗口
 
 - 状态为 `PLAYING` 且 `tableHistory.length === 0`（发牌完成、头牌首出前）
-- 每人每局限申请 1 次（`redealUsed` 记录，重发后新牌仍满足条件时可再次申请——由"每局每人 1 次"约束防死循环）
+- 每人每局限申请 1 次（`redealUsed: Set<seat>` 按座位记录；重发后该座位不可再申请，其余座位仍可各申请一次——每局最多重发 4 次，天然有界防死循环）
 
 ### 2.3 重发语义
 
@@ -61,7 +61,7 @@ export function redeal(g, seat)  // → { ok, reason? }
 
 ### 3.2 单机（src/composables/useGame.js）
 
-- 新增导出 `canRedealNow`（computed：我满足牌型、窗口内、未用过）与 `redeal()` 动作
+- 新增导出 `canRedealNow`（computed：我满足牌型、窗口内、本局未申请过）与 `redeal()` 动作
 - **AI 自动申请**：发牌完成（`rollDice` 成功）后检查四家 AI 手牌；若某 AI 满足条件且**我不满足**，延时 1.2s 该 AI 自动申请（我满足时优先让给我，避免抢走我的一次机会后 UI 困惑）。toast 提示「X 申请重新发牌」
 - **重发后自动掷骰**：抽公共函数 `maybeAutoRoll()`（roller 为 AI 时 1s 后自动掷），原首局 AI 掷骰逻辑与重发后共用
 - AI 头牌首出延时由 600–1000ms 放宽为 2000–2800ms（仅头牌首出，即 `openEnds === null` 时），给真人留出看牌与申请的时间窗；跟牌/扣牌节奏不变
