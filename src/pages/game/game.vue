@@ -251,42 +251,35 @@ const diceLanded = ref(false)
 const leaderRevealed = ref(false)
 let diceFaceTimer = null
 let revealTimer = null
-// 连续局复位：beginRound 每局都重设 rollerSeat，以它为锚清掉上一局残留的
-// 揭示文案/回弹/旧骰面/终局节奏。若不复位，第二局 ROLLING 时 leaderRevealed 残留 true，
-// 模板 v-if 揭示文案顶掉 v-else-if 掷骰按钮，掷骰者点不到按钮全场卡死
-// （solo 走 redirectTo 整页重建从未暴露；net 同页连续局必现）。
-// fx.dice 由 game.state 推送整体覆盖（beginRound 推 dice:null），此处无需手动清。
+// 骰子界面复位（连续局/重发共用）：清定时器、回弹、揭示文案、终局节奏与残留骰面。
+// 若不复位，下一局 ROLLING 时 leaderRevealed/settleBrief/revealKept 残留 true，
+// 模板 v-if 文案顶掉 v-else-if 掷骰按钮，掷骰者点不到按钮全场卡死
+// （solo 连续局走 redirectTo 整页重建从未暴露；net 同页必现）。
+// fx.dice 须手动清：重发同页复用不重建页面，net 的 redealt 推送也不重置 fx，
+// 残留旧骰面会让下次掷骰的抖动动画显示冻结旧面而非翻滚（diceFace 优先取非空 fx.dice）
+function resetDiceUi() {
+  clearTimers()
+  diceLanded.value = false
+  leaderRevealed.value = false
+  randomFace.value = 1 + Math.floor(Math.random() * 6)
+  settleBrief.value = false
+  fx.value.revealKept = false
+  fx.value.settleShow = false
+  fx.value.lastMove = null
+  fx.value.dice = null
+  latestHidden.value = false
+}
+// 连续局复位：beginRound 每局都重设 rollerSeat，以它为锚调 resetDiceUi 清上一局残留
 watch(
   () => view.value.rollerSeat,
-  () => {
-    clearTimers()
-    diceLanded.value = false
-    leaderRevealed.value = false
-    randomFace.value = 1 + Math.floor(Math.random() * 6)
-    // 终局节奏状态复位：否则下一局进入 ROLLING 时 settleBrief/revealKept 残留 true，
-    // 骰子按钮被终局残留文案顶掉，连续局掷骰者看不到按钮全场卡死
-    settleBrief.value = false
-    fx.value.revealKept = false
-    fx.value.settleShow = false
-    fx.value.lastMove = null
-  }
+  () => resetDiceUi()
 )
 // 重发复位：redeal 使状态 PLAYING→ROLLING，若掷骰权恰好回到原掷骰者，上面的 rollerSeat
-// watch 不触发，上一局的揭示文案/回弹/终局节奏残留会顶掉掷骰按钮（卡死）。按 state 翻转
-// 统一复位，复位项与 rollerSeat watch 完全一致（双触发时幂等，无害）
+// watch 不触发，残留会顶掉掷骰按钮（卡死）。按 state 翻转统一复位（双触发时幂等，无害）
 watch(
   () => view.value.state,
   (state, old) => {
-    if (state === 'ROLLING' && old === 'PLAYING') {
-      clearTimers()
-      diceLanded.value = false
-      leaderRevealed.value = false
-      randomFace.value = 1 + Math.floor(Math.random() * 6)
-      settleBrief.value = false
-      fx.value.revealKept = false
-      fx.value.settleShow = false
-      fx.value.lastMove = null
-    }
+    if (state === 'ROLLING' && old === 'PLAYING') resetDiceUi()
   }
 )
 const diceResultText = computed(() => {
