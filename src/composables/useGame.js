@@ -1,8 +1,8 @@
 // src/composables/useGame.js
 import { reactive, computed } from 'vue'
-import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds } from '../core/game.js'
+import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds, redeal as coreRedeal } from '../core/game.js'
 import { aiChoosePlay, aiChooseDiscard } from '../core/ai.js'
-import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
+import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds, canRedeal } from '../core/rules.js'
 import { loadHistory, appendHistory } from './history.js'
 
 /**
@@ -34,6 +34,14 @@ export function useGame() {
     v.tableHistory = [...v.tableHistory]
     Object.assign(view, v)
   }
+
+  /** 我是否可申请重新发牌：PLAYING、无人出牌、我满足牌型、本局未申请过 */
+  const canRedealNow = computed(
+    () => view.state === 'PLAYING' &&
+      view.tableHistory.length === 0 &&
+      !view.redealUsed.includes(0) &&
+      canRedeal(view.myHand)
+  )
 
   /** UI 视角座位名：0=我 1=下家 2=对家 3=上家 */
   const seatLabels = ['我', '下家', '对家', '上家']
@@ -79,15 +87,18 @@ export function useGame() {
         if (res.ok) {
           syncView()
           scheduleAiIfNeeded()
+          maybeAiRedeal() // 发牌完成后检查 AI 重发
         }
       }, 2400)
     }, 1200)
   }
 
   // AI 掷骰：掷骰权在机器人时，开局停 1s 自动掷（复用 roll 的动画节奏：摇 1.2s → 停 2.4s → 进阶段）
-  if (diceRollerSeat !== 0) {
+  /** 掷骰权在 AI 时自动掷。首局与重发后共用；判断读 view.rollerSeat（syncView 后更新），避免 IIFE 常量过期问题 */
+  function maybeAutoRoll() {
+    if (view.state !== 'ROLLING' || view.rollerSeat === 0) return
     setTimeout(() => {
-      if (g.state !== 'ROLLING') return // 守卫：页面已重开等异常情况
+      if (g.state !== 'ROLLING') return // 守卫：页面已重开/已重发等异常情况
       fx.diceRolling = true
       const finalDice = 1 + Math.floor(Math.random() * 6)
       setTimeout(() => {
@@ -99,10 +110,31 @@ export function useGame() {
           if (res.ok) {
             syncView()
             scheduleAiIfNeeded()
+            maybeAiRedeal() // 新一局发牌完成后检查 AI 重发
           }
         }, 2400)
       }, 1200)
     }, 1000)
+  }
+  maybeAutoRoll() // 首局：掷骰权在 AI 时自动掷
+
+  /** 发牌完成后检查 AI 手牌：某 AI 满足重发条件且我不满足时，该 AI 延时自动申请（我优先） */
+  function maybeAiRedeal() {
+    if (view.state !== 'PLAYING' || view.tableHistory.length > 0) return
+    if (canRedealNow.value) return // 我满足时让给我，AI 不抢
+    const aiSeat = [1, 2, 3].find((s) => canRedeal(g.players[s].hand) && !g.redealUsed.has(s))
+    if (aiSeat === undefined) return
+    setTimeout(() => {
+      if (g.state !== 'PLAYING' || g.tableHistory.length > 0 || g.redealUsed.has(aiSeat)) return
+      if (canRedeal(g.players[aiSeat].hand)) {
+        const res = coreRedeal(g, aiSeat)
+        if (res.ok) {
+          uni.showToast({ title: `${labelOf(aiSeat)}申请重新发牌`, icon: 'none' })
+          syncView()
+          maybeAutoRoll() // 重发后掷骰权在 AI，走自动掷
+        }
+      }
+    }, 1200)
   }
 
   /** 我出牌。side: 'bottom'|'top' 跟牌放置端（仅链已开出时有意义），缺省 bottom */
@@ -126,6 +158,14 @@ export function useGame() {
       syncView()
       scheduleAiIfNeeded()
     }
+    return res
+  }
+
+  /** 我申请重新发牌：委托 core（校验+重置），成功后回到掷骰阶段 */
+  function redeal() {
+    if (view.state !== 'PLAYING') return { ok: false, reason: '当前不可申请' }
+    const res = coreRedeal(g, 0)
+    if (res.ok) syncView()
     return res
   }
 
@@ -165,7 +205,9 @@ export function useGame() {
     }
     if (view.currentSeat === 0) return
     const seat = view.currentSeat
-    const delay = 600 + Math.floor(Math.random() * 400)
+    const isLead = g.openEnds === null
+    // AI 头牌首出延时放宽：给真人留出阅读手牌/考虑申请重发的时间
+    const delay = isLead ? 2000 + Math.floor(Math.random() * 800) : 600 + Math.floor(Math.random() * 400)
     setTimeout(() => {
       if (g.state !== 'PLAYING' || g.currentSeat !== seat) return
       const hand = g.players[seat].hand
@@ -190,6 +232,6 @@ export function useGame() {
 
   return {
     view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat,
-    roll, myPlay, myDiscard,
+    roll, myPlay, myDiscard, redeal, canRedealNow,
   }
 }
