@@ -280,3 +280,59 @@ describe('useNetGame', () => {
     expect(net.sent.some((s) => s.type === 'reconnect' && s.payload.token === '')).toBe(true)
   })
 })
+
+describe('useNetGame redeal', () => {
+  it('redeal() 转发 game.redeal 请求；失败 toast 服务器原因', async () => {
+    const net = fakeNet()
+    net.request = async (type, payload) => {
+      net.sent.push({ type, payload })
+      if (type === 'game.redeal') return { type: 'error', payload: { code: 'ILLEGAL', message: '手牌不满足重新发牌条件' } }
+      return { type: 'action.ok', payload: {} }
+    }
+    const { redeal } = useNetGame(net)
+    const res = await redeal()
+    expect(res.ok).toBe(false)
+    expect(net.sent.some((m) => m.type === 'game.redeal')).toBe(true)
+    expect(uni.showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '手牌不满足重新发牌条件' }))
+  })
+
+  it('canRedealNow：PLAYING + 无出牌 + 满足牌型 + 未申请过 = true', () => {
+    const net = fakeNet()
+    const { canRedealNow } = useNetGame(net)
+    net.__push('game.state', {
+      view: {
+        state: 'PLAYING', leaderSeat: 0, rollerSeat: 0, currentSeat: 0,
+        tableTile: null, openEnds: null,
+        myHand: [
+          { id: 't5-1', name: '红八', a: 4, b: 4, type: '横牌', red: true },
+          { id: 't5-2', name: '红八', a: 4, b: 4, type: '横牌', red: true },
+          { id: 't1-1', name: '大天', a: 6, b: 6, type: '横牌', red: false },
+          { id: 't3-1', name: '大五', a: 5, b: 5, type: '横牌', red: false },
+          { id: 't10-1', name: '二板', a: 2, b: 2, type: '横牌', red: false },
+          { id: 't11-1', name: '地幺', a: 1, b: 1, type: '横牌', red: false },
+        ],
+        myKept: [], opponents: [], result: null, tableHistory: [], redealUsed: [],
+      },
+      fx: {}, yourSeat: 0, names: {},
+    })
+    expect(canRedealNow.value).toBe(true)
+    // 已申请过（redealUsed 含我）
+    net.__push('game.state', {
+      view: { state: 'PLAYING', tableHistory: [], redealUsed: [0], myHand: [], myKept: [], opponents: [], result: null, tableTile: null, openEnds: null, leaderSeat: 0, rollerSeat: 0, currentSeat: 0 },
+      fx: {}, yourSeat: 0, names: {},
+    })
+    expect(canRedealNow.value).toBe(false)
+  })
+
+  it('收到 game.redealt 推送：toast 提示申请人', () => {
+    const net = fakeNet()
+    useNetGame(net)
+    net.__push('game.state', {
+      view: { state: 'PLAYING', myHand: [], myKept: [], opponents: [], tableHistory: [], result: null, tableTile: null, openEnds: null, leaderSeat: 0, rollerSeat: 0, currentSeat: 0, redealUsed: [] },
+      fx: {}, yourSeat: 0, names: { 2: '老王' },
+    })
+    uni.showToast.mockClear()
+    net.__push('game.redealt', { seat: 2 })
+    expect(uni.showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '老王申请重新发牌' }))
+  })
+})

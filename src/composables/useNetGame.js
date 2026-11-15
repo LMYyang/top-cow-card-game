@@ -1,7 +1,7 @@
 // src/composables/useNetGame.js
 import { reactive, computed, ref, watch, getCurrentInstance, onUnmounted } from 'vue'
 import { sharedNet } from '../utils/net.js'
-import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
+import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds, canRedeal } from '../core/rules.js'
 import { appendHistory } from './history.js'
 
 /**
@@ -16,7 +16,7 @@ export function useNetGame(net = sharedNet()) {
   const view = reactive({
     state: '', leaderSeat: null, rollerSeat: null, currentSeat: null,
     tableTile: null, openEnds: null, myHand: [], myKept: [],
-    opponents: [], result: null, tableHistory: [],
+    opponents: [], result: null, tableHistory: [], redealUsed: [],
   })
   const fx = reactive({ dice: null, diceRolling: false, revealKept: false, settleShow: false, lastMove: null })
   const connection = net.status
@@ -42,6 +42,9 @@ export function useNetGame(net = sharedNet()) {
     Object.assign(fx, { dice: null, diceRolling: false }, f)
     saveNetHistory(result)
   })
+  const offRedealt = net.on('game.redealt', ({ seat }) => {
+    uni.showToast({ title: `${labelOf(seat)}申请重新发牌`, icon: 'none' })
+  })
   /** 联网局落史：随 game.over 只记一次（game.over 服务器仅终局发一次）。
    *  昵称表来自最近一次 game.state 的 names（绝对座位）；掉线兜底用占位称呼。
    *  统计不写 dingniuzi_stats（那是单机口径）：主页联网积分/已对局从历史条目实时汇总。 */
@@ -58,7 +61,7 @@ export function useNetGame(net = sharedNet()) {
   }
   // sharedNet() 是跨页面存活的模块单例：组件卸载时须退订，否则 game.vue 每次挂载都累积两个处理器
   // （仅组件上下文注册生命周期钩子；单测在组件外直接调用时不注册，避免警告）
-  if (getCurrentInstance()) onUnmounted(() => { offState(); offOver(); stopWatch?.() })
+  if (getCurrentInstance()) onUnmounted(() => { offState(); offOver(); offRedealt(); stopWatch?.() })
 
   /** 拉一次当前快照（fire-and-forget）：游戏未开局时无 gameState 推送，静默忽略错误 */
   async function fetchSnapshot() {
@@ -126,6 +129,21 @@ export function useNetGame(net = sharedNet()) {
     return res.ok // 调用方据此决定是否立即跳回房间页
   }
 
+  /** 申请重新发牌（联网）：服务器校验后广播 game.redealt 与新 game.state */
+  async function redeal() {
+    const res = await call('game.redeal', {})
+    if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    return res
+  }
+
+  /** 我是否可申请重新发牌：PLAYING、无人出牌、满足牌型、本局未申请过 */
+  const canRedealNow = computed(
+    () => view.state === 'PLAYING' &&
+      view.tableHistory.length === 0 &&
+      !view.redealUsed.includes(mySeat.value) &&
+      canRedeal(view.myHand)
+  )
+
   /** 退房：结算页回主菜单前调用；对局中服务器视为断线（宽限+托管），WAITING 中直接移除 */
   async function leave() {
     try { await net.request('room.leave', {}) } catch { /* 连接已断：服务器宽限/清理兜底 */ }
@@ -134,5 +152,5 @@ export function useNetGame(net = sharedNet()) {
   /** 掷骰权座位：以服务器 view.rollerSeat 为准；未开局时回退自己座位（单机语义为 0） */
   const diceRollerSeat = computed(() => view.rollerSeat ?? mySeat.value)
 
-  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, leave, connection, roomId, mySeat, fetchSnapshot }
+  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, redeal, canRedealNow, leave, connection, roomId, mySeat, fetchSnapshot }
 }
