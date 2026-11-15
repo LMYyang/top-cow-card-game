@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   canFollow, playableTiles, mustDiscard, playableForLead,
   canFollowEnds, playableTilesEnds, mustDiscardEnds, placeSides,
-  settle, diceToSeatOffset, seatName,
+  settle, diceToSeatOffset, seatName, canRedeal,
 } from '../src/core/rules.js'
 import { tile } from './helpers.js'
 
@@ -191,5 +191,36 @@ describe('settle 结算', () => {
     const result = settle(players, 0)
     const sum = Object.values(result.scores).reduce((a, b) => a + b, 0)
     expect(sum).toBe(0)
+  })
+})
+
+describe('canRedeal 申请重新发牌条件', () => {
+  it('两红八无红十：满足', () => {
+    const hand = [tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1')]
+    expect(canRedeal(hand)).toBe(true)
+  })
+  it('两红八且有红十：不满足', () => {
+    const hand = [tile('t5-1'), tile('t5-2'), tile('t4-1'), tile('t1-1'), tile('t2-1'), tile('t3-1')]
+    expect(canRedeal(hand)).toBe(false)
+  })
+  it('一红八无红十：不满足', () => {
+    const hand = [tile('t5-1'), tile('t2-2'), tile('t1-1'), tile('t2-1'), tile('t3-1'), tile('t6-1')]
+    expect(canRedeal(hand)).toBe(false)
+  })
+  it('六张全横牌：满足', () => {
+    // 大天(6/6)、大五(5/5)、红八(4/4)、长三(3/3)、二板(2/2)、地幺(1/1)
+    const hand = [tile('t1-1'), tile('t3-1'), tile('t5-1'), tile('t6-1'), tile('t10-1'), tile('t11-1')]
+    expect(canRedeal(hand)).toBe(true)
+  })
+  it('五张横牌加一张竖牌：不满足', () => {
+    const hand = [tile('t1-1'), tile('t3-1'), tile('t5-1'), tile('t6-1'), tile('t10-1'), tile('t4-1')] // 红十为竖牌
+    expect(canRedeal(hand)).toBe(false)
+  })
+  it('两张红八且全横牌：两条件重叠仍满足（同一申请）', () => {
+    const hand = [tile('t5-1'), tile('t5-2'), tile('t1-1'), tile('t3-1'), tile('t10-1'), tile('t11-1')]
+    expect(canRedeal(hand)).toBe(true)
+  })
+  it('空手牌：不满足', () => {
+    expect(canRedeal([])).toBe(false)
   })
 })

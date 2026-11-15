@@ -129,3 +129,16 @@ export function settle(players, leaderSeat) {
     scores,
   }
 }
+
+/**
+ * 是否满足「申请重新发牌」牌型（发牌后、首出前）：
+ * 1. 两红八（4|4）且无红十（4|6）；
+ * 2. 六张全是横牌（两端点数相同）。
+ */
+export function canRedeal(hand) {
+  if (!Array.isArray(hand) || hand.length !== 6) return false
+  const redEights = hand.filter((t) => t.a === 4 && t.b === 4)
+  const hasRedTen = hand.some((t) => t.a === 4 && t.b === 6)
+  if (redEights.length === 2 && !hasRedTen) return true
+  return hand.every((t) => t.a === t.b)
+}
