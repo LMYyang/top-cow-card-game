@@ -74,7 +74,7 @@ export function useGame() {
   /** 开局掷骰（真人掷骰时点击按钮触发）。摇 1.2s → 停 2.4s 看点数并揭头牌 → 自动进入出牌阶段 */
   function roll(dice) {
     if (view.state !== 'ROLLING') return
-    if (diceRollerSeat !== 0) return // AI 掷骰局：屏蔽真人点击（UI 已隐藏按钮，双保险）
+    if (view.rollerSeat !== 0) return // 掷骰权不在真人：屏蔽（读响应式 rollerSeat，AI 重发后正确转移；UI 已隐藏按钮，双保险）
     fx.diceRolling = true
     const finalDice = dice ?? 1 + Math.floor(Math.random() * 6)
     // 摇骰 1.2s → 落定 → 停 2.4s 看点数并揭头牌 → 进入出牌阶段（AI 掷骰走 aiRollSame 流程，节奏一致）

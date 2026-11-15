@@ -35,8 +35,10 @@ describe('useGame redeal', () => {
     )
     // syncView 未触发时 myHand 是 reactive 视图，直接读 view 判断
     expect(g.canRedealNow.value).toBe(true)
-    // 出牌后窗口关闭
-    vi.advanceTimersByTime(3000) // AI 头牌若轮到则行动（不阻塞断言）
+    // 模拟首出落桌：向响应式 tableHistory 写入一条出牌历史（canRedealNow 只读 view.tableHistory，
+    // 写入即驱动 computed；经 myPlay 需轮转到我且随机牌不可控，此处只验证对 tableHistory 的响应）
+    g.view.tableHistory.push({ seat: 2, tiles: [g.view.myHand[2]] })
+    expect(g.canRedealNow.value).toBe(false)
   })
 
   it('redeal()：窗口内满足条件时成功，状态回 ROLLING 且掷骰权归我', () => {
