@@ -83,8 +83,15 @@
 
     <!-- 结算覆盖层 -->
     <view v-if="fx.settleShow && view.result" class="settle-overlay">
-      <view class="settle-card">
-        <text class="settle-title">本局结算</text>
+      <!-- 我赢时的庆祝特效：彩带纸屑 + 卷曲丝带，铺满遮罩层、落在结算卡上方，不挡按钮点击 -->
+      <view v-if="iAmWinner" class="confetti-layer">
+        <view v-for="n in 18" :key="n" class="confetti" :class="'c' + (n % 4)" :style="confettiStyle(n)" />
+        <view v-for="n in 8" :key="'r' + n" class="ribbon" :class="'r' + (n % 3)" :style="ribbonStyle(n)">
+          <view class="ribbon-band" />
+        </view>
+      </view>
+      <view class="settle-card" :class="{ 'winner-card': iAmWinner }">
+        <text class="settle-title" :class="{ 'winner-title': iAmWinner }">{{ iAmWinner ? '🏆 恭喜获胜' : '本局结算' }}</text>
         <view v-for="r in settleRanks" :key="r.seat" class="settle-row" :class="{ winner: r.seat === view.result.winner }">
           <view class="settle-player">
             <PlayerAvatar :seat="r.seat" size="sm" />
@@ -309,6 +316,29 @@ const settleRanks = computed(() => {
     (a, b) => ((a.seat - mySeatVal.value + 4) % 4) - ((b.seat - mySeatVal.value + 4) % 4)
   )
 })
+
+/** 本局我赢了：结算弹窗切换为获胜庆祝样式（彩带 + 标题变化） */
+const iAmWinner = computed(() =>
+  view.value.result && view.value.result.winner === mySeatVal.value
+)
+
+/** 彩带粒子样式：按序号确定性散布（位置/延时/时长/初始角度），每次弹出结算重挂 v-for 自动重放 */
+function confettiStyle(n) {
+  const left = (n * 5.5) % 100 // 横向铺开
+  const delay = (n % 6) * 0.25 // 错峰下落
+  const duration = 2.6 + (n % 5) * 0.4
+  const rotate = (n * 47) % 360
+  return { left: `${left}%`, animationDelay: `${delay}s`, animationDuration: `${duration}s`, '--rot': `${rotate}deg` }
+}
+
+/** 卷曲丝带样式：位置/错峰/时长/摆幅均确定性散布（--dur/--delay 同时供外层下落与内层翻卷两个动画使用） */
+function ribbonStyle(n) {
+  const left = (n * 12.5 + 6) % 100
+  const delay = (n % 4) * 0.5
+  const duration = 3.4 + (n % 4) * 0.5
+  const sway = 40 + (n % 3) * 30 // 左右摆动幅度 px
+  return { left: `${left}%`, '--delay': `${delay}s`, '--dur': `${duration}s`, '--sway': `${sway}px` }
+}
 
 function opponentBySeat(seat) {
   return view.value.opponents.find((o) => o.seat === seat) || { handCount: 0, keptCount: 0 }
@@ -666,6 +696,101 @@ function confirmGoHome() {
   box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.5);
 }
 .settle-title { font-size: 40rpx; font-weight: bold; text-align: center; color: #c9a227; }
+
+/* 我获胜的结算卡：金色边框微光 + 弹入动画（卡片等标题入场完再弹入，让大字先出场） */
+.settle-card.winner-card {
+  border: 3rpx solid #c9a227;
+  box-shadow: 0 0 40rpx rgba(201, 162, 39, 0.45), 0 8rpx 32rpx rgba(0, 0, 0, 0.5);
+  animation: winner-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1);
+  position: relative; overflow: visible;
+}
+@keyframes winner-pop {
+  0%   { transform: scale(0.7); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.settle-title.winner-title {
+  color: #e8c95a;
+  font-size: 44rpx;
+  text-shadow: 0 0 24rpx rgba(201, 162, 39, 0.8);
+  /* 入场：从超大（屏幕中央占满）缩到位，随后接呼吸发光循环动画 */
+  animation: winner-drop-in 0.6s cubic-bezier(0.2, 1.3, 0.35, 1) both, winner-glow 1.6s ease-in-out 0.6s infinite;
+  display: block;
+}
+/* 标题入场：scale 从 5 倍缩到 1（配合透明度淡入，模拟从屏幕中央大字砸落到标题位），带轻微过冲回弹 */
+@keyframes winner-drop-in {
+  0%   { transform: scale(5); opacity: 0; }
+  60%  { transform: scale(0.94); opacity: 1; }
+  80%  { transform: scale(1.04); }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes winner-glow {
+  0%, 100% { text-shadow: 0 0 24rpx rgba(201, 162, 39, 0.8); }
+  50%      { text-shadow: 0 0 44rpx rgba(232, 201, 90, 1); }
+}
+
+/* 庆祝彩带：覆盖在结算卡上方（z-index 2 高于卡片），pointer-events 穿透不挡按钮点击；
+   纸屑随机下落+翻转飘过结算卡面 */
+.confetti-layer {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+}
+.confetti {
+  position: absolute;
+  top: -30rpx;
+  width: 16rpx; height: 26rpx;
+  border-radius: 4rpx;
+  opacity: 0.9;
+  animation-name: confetti-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+/* 四种配色：金/红/青/米白（与整体深木金主题协调） */
+.confetti.c0 { background: #c9a227; }
+.confetti.c1 { background: #a04030; }
+.confetti.c2 { background: #4a8f7b; }
+.confetti.c3 { background: #f5f0e1; }
+@keyframes confetti-fall {
+  0%   { transform: translateY(-6vh) rotate3d(1, 1, 0, 0deg); opacity: 0.9; }
+  100% { transform: translateY(110vh) rotate3d(1, 1, 0, 720deg); opacity: 0.5; }
+}
+
+/* 卷曲丝带：双层结构——外层只做整体下落+左右摇摆（缓动柔和），内层单独做旋转翻卷。
+   拆开两个动画后互不干扰：外层不走"僵硬"的直线翻转，内层用快速正弦式翻转模拟
+   丝带被风卷动时的翻面（rotateX 前后翻 + 轻微 rotateZ 摆头），看起来是柔软飘落的卷曲绸带 */
+.ribbon {
+  position: absolute;
+  top: -60rpx;
+  animation: ribbon-drop var(--dur, 3.6s) cubic-bezier(0.45, 0, 0.55, 1) var(--delay, 0s) infinite;
+}
+.ribbon-band {
+  display: block;
+  width: 12rpx; height: 72rpx;
+  border-radius: 6rpx;
+  opacity: 0.85;
+  animation: ribbon-spin calc(var(--dur, 3.6s) / 3) linear var(--delay, 0s) infinite;
+  transform-style: preserve-3d;
+}
+.ribbon.r0 .ribbon-band { background: linear-gradient(180deg, #c9a227, #e8c95a); }
+.ribbon.r1 .ribbon-band { background: linear-gradient(180deg, #a04030, #c96050); }
+.ribbon.r2 .ribbon-band { background: linear-gradient(180deg, #4a8f7b, #6ab59e); }
+/* 外层下落路径：translateX 三段摆（左-右-回），X/Y 缓动错相位形成 S 形飘落 */
+@keyframes ribbon-drop {
+  0%   { transform: translate(0, 0) rotate(6deg); }
+  25%  { transform: translate(calc(var(--sway) * 1), 26vh) rotate(-10deg); }
+  50%  { transform: translate(calc(var(--sway) * -0.7), 52vh) rotate(8deg); }
+  75%  { transform: translate(calc(var(--sway) * 0.7), 78vh) rotate(-8deg); }
+  100% { transform: translate(0, 112vh) rotate(6deg); }
+}
+/* 内层翻卷：快速前后翻面（rotateX -80°→80° 摆动）+ 轻微侧摆，近似丝带绕轴打卷的翻动 */
+@keyframes ribbon-spin {
+  0%   { transform: rotateX(-80deg) rotateZ(-6deg); }
+  25%  { transform: rotateX(0deg)    rotateZ(4deg); }
+  50%  { transform: rotateX(80deg)  rotateZ(-4deg); }
+  75%  { transform: rotateX(0deg)   rotateZ(5deg); }
+  100% { transform: rotateX(-80deg) rotateZ(-6deg); }
+}
 .settle-row {
   display: flex; justify-content: space-between; align-items: center;
   background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 20rpx 24rpx; font-size: 28rpx;
