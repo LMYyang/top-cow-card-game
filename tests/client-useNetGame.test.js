@@ -123,9 +123,16 @@ describe('useNetGame', () => {
 
   it('game.over：result 写入 view，终局 view 快照应用，revealKept 置位', () => {
     const net = fakeNet()
+    // 历史记录写入隔离：setStorageSync 记录调用，测试末尾断言联网落史
+    const stored = {}
+    uni.setStorageSync = (k, v) => { stored[k] = v }
     const { view, fx } = useNetGame(net)
+    net.__push('game.state', {
+      view: { state: 'PLAYING', currentSeat: 0, openEnds: null, myHand: [], myKept: [], opponents: [], tableHistory: [], tableTile: null, leaderSeat: 0, rollerSeat: 0, result: null },
+      fx: {}, yourSeat: 0, names: { 0: '测试甲', 2: '乙' },
+    })
     net.__push('game.over', {
-      result: { winner: 2, ranks: [], scores: { 0: -1, 1: -2, 2: 6, 3: -3 } },
+      result: { winner: 2, ranks: [{ seat: 2, points: 0, role: '赢家' }, { seat: 0, points: 1, role: '小庄' }], scores: { 0: -1, 1: -2, 2: 6, 3: -3 } },
       // 服务器 game.over 携带终局视图：终牌已在 tableHistory、state 翻 SETTLE
       view: { state: 'SETTLE', currentSeat: 2, openEnds: { top: 4, bottom: 6 }, myHand: [], myKept: [], opponents: [], tableTile: null, leaderSeat: 2, rollerSeat: 2, result: null, tableHistory: [{ seat: 2, tiles: [{ id: 't9-1', name: '九', a: 9, b: 9 }], side: 'bottom', mirrored: false }] },
       fx: { revealKept: true },
@@ -134,6 +141,16 @@ describe('useNetGame', () => {
     expect(view.state).toBe('SETTLE') // 终局视图被应用（终牌上链、state 翻转）
     expect(view.tableHistory).toHaveLength(1) // 最后一张牌已在桌面
     expect(fx.revealKept).toBe(true)
+    // 联网局落史：mode='net'，昵称快照随条目保存；不写 dingniuzi_stats（那是单机口径，
+    // 主页联网统计从历史条目实时汇总）
+    const history = stored['dingniuzi_history']
+    expect(history).toHaveLength(1)
+    expect(history[0].mode).toBe('net')
+    expect(history[0].scores[2]).toBe(6)
+    expect(history[0].roles[0]).toBe('小庄')
+    expect(history[0].names).toEqual({ 0: '测试甲', 2: '乙' })
+    expect(stored['dingniuzi_stats']).toBeUndefined()
+    uni.setStorageSync = vi.fn() // 还原 mock，避免污染其他用例
   })
 
   it('restart 发 settleContinue', async () => {

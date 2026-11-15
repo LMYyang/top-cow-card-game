@@ -2,6 +2,7 @@
 import { reactive, computed, ref, watch, getCurrentInstance, onUnmounted } from 'vue'
 import { sharedNet } from '../utils/net.js'
 import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
+import { appendHistory } from './history.js'
 
 /**
  * 联网局管理：接口与 useGame 一致，数据源为服务器推送。
@@ -39,7 +40,22 @@ export function useNetGame(net = sharedNet()) {
     if (v) Object.keys(v).forEach((k) => { view[k] = v[k] })
     view.result = result
     Object.assign(fx, { dice: null, diceRolling: false }, f)
+    saveNetHistory(result)
   })
+  /** 联网局落史：随 game.over 只记一次（game.over 服务器仅终局发一次）。
+   *  昵称表来自最近一次 game.state 的 names（绝对座位）；掉线兜底用占位称呼。
+   *  统计不写 dingniuzi_stats（那是单机口径）：主页联网积分/已对局从历史条目实时汇总。 */
+  function saveNetHistory(result) {
+    const entry = {
+      time: Date.now(),
+      mode: 'net', // 历史列表区分单机/联网
+      scores: result.scores,
+      roles: Object.fromEntries((result.ranks || []).map((r) => [r.seat, r.role])),
+      points: Object.fromEntries((result.ranks || []).map((r) => [r.seat, r.points])),
+      names: { ...names }, // 座位→昵称快照（联网对手是真人，昵称有展示价值）
+    }
+    appendHistory(entry)
+  }
   // sharedNet() 是跨页面存活的模块单例：组件卸载时须退订，否则 game.vue 每次挂载都累积两个处理器
   // （仅组件上下文注册生命周期钩子；单测在组件外直接调用时不注册，避免警告）
   if (getCurrentInstance()) onUnmounted(() => { offState(); offOver(); stopWatch?.() })

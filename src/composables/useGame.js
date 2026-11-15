@@ -3,6 +3,7 @@ import { reactive, computed } from 'vue'
 import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds } from '../core/game.js'
 import { aiChoosePlay, aiChooseDiscard } from '../core/ai.js'
 import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds } from '../core/rules.js'
+import { loadHistory, appendHistory } from './history.js'
 
 /**
  * 单机局管理。真人固定 seat 0。
@@ -141,18 +142,22 @@ export function useGame() {
           totalScore: prev.totalScore + my,
         })
         // 历史记录：追加本局明细（时间、四人角色与得分、累计积分），最新在前，最多留 50 局
-        const prevHistory = uni.getStorageSync('dingniuzi_history') || []
+        const prevHistory = loadHistory()
         let running = prevHistory.length > 0 ? prevHistory[0].totalsAfter : { 0: 0, 1: 0, 2: 0, 3: 0 }
+        // 累计链以「最近一条单机局」为锚：联网局插在其后但不参与单机累计（否则联网分混入单机累计口径）
+        const anchor = [...prevHistory].find((h) => h.mode === 'solo')
+        running = anchor ? anchor.totalsAfter : running
         const totalsAfter = {}
         for (const s of [0, 1, 2, 3]) totalsAfter[s] = (running[s] || 0) + (view.result.scores[s] || 0)
         const entry = {
           time: Date.now(),
+          mode: 'solo', // 历史列表区分单机/联网
           scores: view.result.scores, // { seat: number }
           roles: Object.fromEntries(view.result.ranks.map((r) => [r.seat, r.role])),
           points: Object.fromEntries(view.result.ranks.map((r) => [r.seat, r.points])), // 扣点
           totalsAfter,
         }
-        uni.setStorageSync('dingniuzi_history', [entry, ...prevHistory].slice(0, 50))
+        appendHistory(entry)
         // 局末节奏（显示「本局结束」→ 停顿 → 亮牌）由 game.vue 的 paceSettle 统一编排（两模式一致），
         // 这里不再本地定时点亮 revealKept（避免与客户端编排双重触发）
       }
