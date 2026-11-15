@@ -8,8 +8,9 @@
 
 import { randomUUID } from 'node:crypto'
 
-import { createGame, rollDice, play, discard, viewOf } from '../src/core/game.js'
+import { createGame, rollDice, play, discard, viewOf, redeal as coreRedeal } from '../src/core/game.js'
 import { aiChoosePlay, aiChooseDiscard } from '../src/core/ai.js'
+import { canRedeal } from '../src/core/rules.js'
 
 const GRACE_MS = 60_000 // 对局中断线宽限：超时未重连则踢出（连续局重连窗口依赖它）
 const ROOM_IDLE_MS = 5 * 60_000 // WAITING 房无任何活动（无成员进出/无状态变更）多久后销毁
@@ -364,7 +365,7 @@ export class RoomManager {
     if (!room) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
     const me = this.memberByToken(room, token)
     if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
-    if (type !== 'game.roll' && type !== 'game.play' && type !== 'game.discard' && type !== 'game.settleContinue') {
+    if (type !== 'game.roll' && type !== 'game.play' && type !== 'game.discard' && type !== 'game.settleContinue' && type !== 'game.redeal') {
       return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } } // 协议层校验，不依赖对局状态
     }
     const g = room.game
@@ -405,6 +406,18 @@ export class RoomManager {
       this.afterAction(room)
       return { ok: true }
     }
+    if (type === 'game.redeal') {
+      if (g.state !== 'PLAYING') return { error: { code: 'BAD_STATE', message: '当前不可申请重新发牌' } }
+      if (me.aiTimer) return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
+      const res = coreRedeal(g, me.seat)
+      if (!res.ok) return { error: { code: 'ILLEGAL', message: res.reason } }
+      // 重发事实广播 + 状态回 ROLLING（各端回到掷骰界面）
+      this.broadcast(room, 'game.redealt', { seat: me.seat })
+      this.pushRoomState(room)
+      this.pushGameState(room)
+      this.maybeAutoRoll(room) // 掷骰权移交 AI/托管座位时自动掷
+      return { ok: true }
+    }
     if (type === 'game.settleContinue') return this.settleContinue(room, me)
     return { error: { code: 'UNKNOWN_ACTION', message: '未知动作' } }
   }
@@ -436,6 +449,7 @@ export class RoomManager {
         this.pushRoomState(room)
         this.pushGameState(room)
         this.scheduleAiTurn(room)
+        this.maybeAiRedeal(room) // 发牌完成：检查 AI/托管座位重发
       }
     }, 1200 + 2400)
     room.timers.add(t2)
@@ -458,6 +472,35 @@ export class RoomManager {
       }, 1000)
       room.timers.add(t)
     }
+  }
+
+  /** 发牌完成后检查 AI/托管座位：未出牌窗口内存在 AI/托管座位即定时 1.2s 后复查手牌代为申请（真人满足时让真人） */
+  maybeAiRedeal(room) {
+    const g = room.game
+    // 防御性：enableAiControl 可能带残缺 game 桩（测试/极端时序），缺字段直接跳过
+    if (!g || g.state !== 'PLAYING' || !Array.isArray(g.players) || !Array.isArray(g.tableHistory) || g.tableHistory.length > 0) return
+    const humanSatisfied = room.members.some(
+      (m) => !m.isAI && !m.aiTimer && m.connected && !m.gone && canRedeal(g.players[m.seat].hand) && !g.redealUsed.has(m.seat)
+    )
+    if (humanSatisfied) return // 真人满足时让给真人
+    const aiSeat = room.members.find((m) => (m.isAI || m.aiTimer) && !m.gone && !g.redealUsed.has(m.seat))
+    if (!aiSeat) return
+    const gRef = g
+    const t = setTimeout(() => {
+      room.timers.delete(t)
+      if (room.game !== gRef || gRef.state !== 'PLAYING' || gRef.tableHistory.length > 0) return
+      // 复查：座位仍为 AI/托管（掉线者重连收回托管则取消）、手牌仍满足且未申请过
+      const m2 = room.members.find((x) => x.seat === aiSeat.seat)
+      if (!m2 || (!m2.isAI && !m2.aiTimer) || m2.gone) return
+      if (gRef.redealUsed.has(aiSeat.seat) || !canRedeal(gRef.players[aiSeat.seat].hand)) return
+      const res = coreRedeal(gRef, aiSeat.seat)
+      if (!res.ok) return
+      this.broadcast(room, 'game.redealt', { seat: aiSeat.seat })
+      this.pushRoomState(room)
+      this.pushGameState(room)
+      this.maybeAutoRoll(room)
+    }, 1200)
+    room.timers.add(t)
   }
 
   /** 每次动作后：检测终局 / 推送视图 / 调度托管座位 */
@@ -491,7 +534,8 @@ export class RoomManager {
     const seat = g.currentSeat
     const member = room.members.find((m) => m.seat === seat)
     if (!member || (!member.isAI && !member.aiTimer)) return // 真人在位，等待其动作
-    const delay = 600 + Math.floor(Math.random() * 400)
+    const isLead = g.openEnds === null
+    const delay = isLead ? 2000 + Math.floor(Math.random() * 800) : 600 + Math.floor(Math.random() * 400)
     const t = setTimeout(() => {
       room.timers.delete(t)
       if (room.game !== g || g.state !== 'PLAYING' || g.currentSeat !== seat) return
@@ -560,6 +604,7 @@ export class RoomManager {
     const g = room.game
     if (!g) return
     if (g.state === 'PLAYING' && g.currentSeat === member.seat) this.scheduleAiTurn(room)
+    if (g.state === 'PLAYING') this.maybeAiRedeal(room) // 进托管即检查：满足重发条件由 AI 代申请（窗口内掉线的满足者不让机会流失）
     if (g.state === 'ROLLING' && g.rollerSeat === member.seat) this.maybeAutoRoll(room)
   }
 

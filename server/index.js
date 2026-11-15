@@ -183,7 +183,8 @@ function handle(mgr, conn, msg) {
     case 'game.roll':
     case 'game.play':
     case 'game.discard':
-    case 'game.settleContinue': {
+    case 'game.settleContinue':
+    case 'game.redeal': {
       const res = mgr.gameAction(conn.token, type, payload)
       if (res.error) return replyError(res.error.code, res.error.message)
       return reply('action.ok', {})

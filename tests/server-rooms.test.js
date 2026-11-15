@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { RoomManager } from '../server/rooms.js'
 import { viewOf } from '../src/core/game.js'
+import { TILES } from '../src/core/tiles.js'
 
 let mgr
 beforeEach(() => {
@@ -773,5 +774,109 @@ describe('断线重连与结算', () => {
     // a 开局后也不列
     a.game = { state: 'PLAYING' }
     expect(mgr.listRooms()).toHaveLength(0)
+  })
+})
+
+describe('game.redeal 申请重新发牌', () => {
+  const byId = (id) => TILES.find((t) => t.id === id)
+
+  /** 开局并推进到 PLAYING（掷骰权座位若为 AI 则托管代掷） */
+  function startToPlaying(room, tokens) {
+    mgr.startGame(tokens[0], room.roomId)
+    vi.advanceTimersByTime(1000) // maybeAutoRoll 的 1s 延迟（真人掷骰权时不触发，见内部分支）
+    const rollerSeat = room.game.rollerSeat
+    const rollerMember = room.members.find((m) => m.seat === rollerSeat)
+    if (!rollerMember.isAI) mgr.gameAction(rollerMember.token, 'game.roll', {})
+    vi.advanceTimersByTime(1200 + 2400)
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+  }
+
+  it('满足条件的真人申请成功：状态回 ROLLING、rollerSeat 移交、广播 game.redealt', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    startToPlaying(room, tokens)
+    // 强制注入：座位 0 手牌满足两红八无红十
+    room.game.players[0].hand = ['t5-1', 't5-2', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    const me = room.members.find((m) => m.seat === 0)
+    me.conn.sent.length = 0
+    const res = mgr.gameAction(me.token, 'game.redeal', {})
+    expect(res.error).toBeUndefined()
+    expect(mgr.roomStateOf(room)).toBe('ROLLING')
+    expect(room.game.rollerSeat).toBe(0) // 申请人打骰
+    expect(room.game.players.every((p) => p.hand.length === 0)).toBe(true)
+    // 广播：所有在线真人收到 game.redealt
+    const c0 = room.members.find((m) => m.seat === 0).conn
+    expect(c0.sent.some((m) => m.type === 'game.redealt' && m.payload.seat === 0)).toBe(true)
+    // 重发后真人可再掷骰
+    const r2 = mgr.gameAction(me.token, 'game.roll', {})
+    expect(r2.error).toBeUndefined()
+    vi.advanceTimersByTime(1200 + 2400)
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    vi.useRealTimers()
+  })
+
+  it('牌型不满足被拒（ILLEGAL）', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    startToPlaying(room, tokens)
+    const me = room.members.find((m) => m.seat === 0)
+    const res = mgr.gameAction(me.token, 'game.redeal', {})
+    expect(res.error).toMatchObject({ code: 'ILLEGAL' })
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    vi.useRealTimers()
+  })
+
+  it('已出牌后申请被拒', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    startToPlaying(room, tokens)
+    // 头牌出一张合法首出牌
+    const g = room.game
+    const leader = g.players[g.leaderSeat]
+    const leaderMember = room.members.find((m) => m.seat === g.leaderSeat)
+    const others = g.players.filter((p) => p.seat !== g.leaderSeat).map((p) => p.hand)
+    const ends = new Set(others.flat().flatMap((t) => [t.a, t.b]))
+    const legal = leader.hand.find((t) => ends.has(t.a) || ends.has(t.b))
+    if (leaderMember.isAI) {
+      // AI 头牌：放宽后的首出延时 2000-2800ms，步进让 AI 出牌
+      vi.advanceTimersByTime(3000)
+      expect(g.tableHistory.length).toBeGreaterThan(0)
+    } else {
+      expect(mgr.gameAction(leaderMember.token, 'game.play', { tileIds: [legal.id] }).error).toBeUndefined()
+    }
+    const me = room.members.find((m) => m.seat === 0)
+    const res = mgr.gameAction(me.token, 'game.redeal', {})
+    expect(res.error).toMatchObject({ code: 'ILLEGAL' })
+    vi.useRealTimers()
+  })
+
+  it('托管座位满足条件：AI 代申请重发', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    startToPlaying(room, tokens)
+    // 挑一个 AI 座位（满员房无 AI，先让座位 1 掉线进托管）
+    mgr.onDisconnect(tokens[1])
+    const m1 = room.members.find((m) => m.seat === 1)
+    expect(m1.aiTimer).toBeTruthy()
+    room.game.players[1].hand = ['t5-1', 't5-2', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    // 真人座位 0 手牌不满足（显式注入不满足的手牌保证确定性）
+    room.game.players[0].hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    vi.advanceTimersByTime(1500) // AI 代申请延时 1.2s
+    expect(mgr.roomStateOf(room)).toBe('ROLLING')
+    expect(room.game.rollerSeat).toBe(1)
+    vi.useRealTimers()
+  })
+
+  it('viewOf 含 redealUsed（game.state 下发）', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    startToPlaying(room, tokens)
+    room.game.players[0].hand = ['t5-1', 't5-2', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    const me = room.members.find((m) => m.seat === 0)
+    me.conn.sent.length = 0
+    mgr.gameAction(me.token, 'game.redeal', {})
+    const stateMsg = me.conn.sent.filter((m) => m.type === 'game.state').pop()
+    expect(stateMsg.payload.view.redealUsed).toEqual([0])
+    vi.useRealTimers()
   })
 })
