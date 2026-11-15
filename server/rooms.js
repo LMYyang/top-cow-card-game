@@ -489,13 +489,15 @@ export class RoomManager {
     const t = setTimeout(() => {
       room.timers.delete(t)
       if (room.game !== gRef || gRef.state !== 'PLAYING' || gRef.tableHistory.length > 0) return
-      // 复查：座位仍为 AI/托管（掉线者重连收回托管则取消）、手牌仍满足且未申请过
-      const m2 = room.members.find((x) => x.seat === aiSeat.seat)
-      if (!m2 || (!m2.isAI && !m2.aiTimer) || m2.gone) return
-      if (gRef.redealUsed.has(aiSeat.seat) || !canRedeal(gRef.players[aiSeat.seat].hand)) return
-      const res = coreRedeal(gRef, aiSeat.seat)
+      // 复查：扫描当前所有 AI/托管座位（掉线者重连收回托管则跳过、已申请过则跳过），
+      // 取第一个手牌满足者的座位代为申请——首个座位手牌不满足时兜底尝试其余 AI/托管座位
+      const target = room.members.find(
+        (m) => (m.isAI || m.aiTimer) && !m.gone && !gRef.redealUsed.has(m.seat) && canRedeal(gRef.players[m.seat].hand)
+      )
+      if (!target) return
+      const res = coreRedeal(gRef, target.seat)
       if (!res.ok) return
-      this.broadcast(room, 'game.redealt', { seat: aiSeat.seat })
+      this.broadcast(room, 'game.redealt', { seat: target.seat })
       this.pushRoomState(room)
       this.pushGameState(room)
       this.maybeAutoRoll(room)

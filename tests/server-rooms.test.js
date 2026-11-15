@@ -3,6 +3,8 @@ import { RoomManager } from '../server/rooms.js'
 import { viewOf } from '../src/core/game.js'
 import { TILES } from '../src/core/tiles.js'
 
+const byId = (id) => TILES.find((t) => t.id === id)
+
 let mgr
 beforeEach(() => {
   mgr = new RoomManager()
@@ -333,6 +335,10 @@ describe('开始对局与动作路由', () => {
     expect(rolled.error).toBeUndefined()
     vi.advanceTimersByTime(3600)
     expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    // 注入全员不满足重发条件的手牌：AI 座位随机牌型偶发满足 canRedeal，maybeAiRedeal 会代申请重发打断本测试编排
+    for (const p of room.game.players) {
+      p.hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    }
     // 头牌若为真人（乙）：乙的 token 未知名字可能重复，直接用成员 token 找真人代出；更稳妥的方式是允许 AI 路径验证：
     // 直接让头牌座位所属成员（无论真人/AI）行动——真人用其 token 出牌，AI 靠定时器。
     const leaderMember = room.members.find(m => m.seat === room.game.leaderSeat)
@@ -778,8 +784,6 @@ describe('断线重连与结算', () => {
 })
 
 describe('game.redeal 申请重新发牌', () => {
-  const byId = (id) => TILES.find((t) => t.id === id)
-
   /** 开局并推进到 PLAYING（掷骰权座位若为 AI 则托管代掷） */
   function startToPlaying(room, tokens) {
     mgr.startGame(tokens[0], room.roomId)
@@ -819,6 +823,8 @@ describe('game.redeal 申请重新发牌', () => {
     vi.useFakeTimers()
     const { room, tokens } = fullRoom()
     startToPlaying(room, tokens)
+    // 注入确定的不满足手牌（随机牌型 ~5% 概率天然满足 canRedeal，会偶发成功导致断言失败）
+    room.game.players[0].hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
     const me = room.members.find((m) => m.seat === 0)
     const res = mgr.gameAction(me.token, 'game.redeal', {})
     expect(res.error).toMatchObject({ code: 'ILLEGAL' })
@@ -854,13 +860,16 @@ describe('game.redeal 申请重新发牌', () => {
     vi.useFakeTimers()
     const { room, tokens } = fullRoom()
     startToPlaying(room, tokens)
+    // 显式注入确定性手牌：座位 1 满足两红八无红十，真人座位 0/2/3 不满足。
+    // 必须在掉线前注入——onDisconnect 会立即触发 maybeAiRedeal 的真人满足检查，随机牌型会偶发让牌导致断言失败
+    room.game.players[1].hand = ['t5-1', 't5-2', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    room.game.players[0].hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    room.game.players[2].hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
+    room.game.players[3].hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
     // 挑一个 AI 座位（满员房无 AI，先让座位 1 掉线进托管）
     mgr.onDisconnect(tokens[1])
     const m1 = room.members.find((m) => m.seat === 1)
     expect(m1.aiTimer).toBeTruthy()
-    room.game.players[1].hand = ['t5-1', 't5-2', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
-    // 真人座位 0 手牌不满足（显式注入不满足的手牌保证确定性）
-    room.game.players[0].hand = ['t4-1', 't5-1', 't1-1', 't3-1', 't10-1', 't11-1'].map(byId)
     vi.advanceTimersByTime(1500) // AI 代申请延时 1.2s
     expect(mgr.roomStateOf(room)).toBe('ROLLING')
     expect(room.game.rollerSeat).toBe(1)
