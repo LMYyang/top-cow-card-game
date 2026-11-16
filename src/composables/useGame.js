@@ -3,6 +3,7 @@ import { reactive, computed } from 'vue'
 import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds, redeal as coreRedeal } from '../core/game.js'
 import { aiChoosePlay, aiChooseDiscard } from '../core/ai.js'
 import { mustDiscardEnds as coreMustDiscardEnds, playableTilesEnds as corePlayableTilesEnds, canRedeal } from '../core/rules.js'
+import { normalizeSettings } from '../core/settings.js'
 import { loadHistory, appendHistory } from './history.js'
 
 /**
@@ -13,13 +14,15 @@ export function useGame() {
   // 连续局：读取上一局赢家作为本局掷骰者（redirectTo 重开时生效；首局无记录默认 0）
   const lastWinner = uni.getStorageSync('dingniuzi_last_winner')
   const roller = typeof lastWinner === 'number' ? lastWinner : 0
-  const g = createGame(Math.random, roller)
+  const settings = normalizeSettings(uni.getStorageSync('dingniuzi_settings'))
+  const g = createGame(Math.random, roller, settings)
   const fx = reactive({
     dice: null,
     diceRolling: false,
     lastMove: null, // { seat, tileIds }
     settleShow: false,
     revealKept: false, // 局末亮牌阶段：翻开所有人扣的牌（结算弹窗前展示）
+    accountSplash: null, // { seat, type } 宣告特效（播一次）
   })
 
   const view = reactive(viewOf(g, 0))
@@ -33,6 +36,9 @@ export function useGame() {
     v.myKept = [...v.myKept]
     v.tableHistory = [...v.tableHistory]
     Object.assign(view, v)
+    if (g.account && (!fx.accountSplash || fx.accountSplash.seat !== g.account.seat || fx.accountSplash.type !== g.account.type)) {
+      fx.accountSplash = { seat: g.account.seat, type: g.account.type }
+    }
   }
 
   /** 我是否可申请重新发牌：PLAYING、无人出牌、我满足牌型、本局未申请过 */
@@ -137,10 +143,10 @@ export function useGame() {
     }, 1200)
   }
 
-  /** 我出牌。side: 'bottom'|'top' 跟牌放置端（仅链已开出时有意义），缺省 bottom */
-  function myPlay(tileId, side = 'bottom') {
+  /** 我出牌。side: 'bottom'|'top' 跟牌放置端（仅链已开出时有意义），缺省 bottom；declare: 出这张牌同时宣告算账 */
+  function myPlay(tileId, side = 'bottom', declare = false) {
     if (!myTurn.value || view.state !== 'PLAYING') return { ok: false }
-    const res = play(g, 0, [tileId], side)
+    const res = play(g, 0, [tileId], side, declare)
     if (res.ok) {
       fx.lastMove = { seat: 0, tileIds: [tileId] }
       syncView()
