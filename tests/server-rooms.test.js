@@ -890,6 +890,37 @@ describe('game.redeal 申请重新发牌', () => {
   })
 })
 
+describe('game.play declare 算账宣告（服务端复核）', () => {
+  it('declare:true 构成宣告 → g.account 记录；二次宣告被「本局已有人宣告算账」拒', () => {
+    vi.useFakeTimers()
+    const { room, tokens } = fullRoom()
+    // 房间设置：开启算账（WAITING 阶段注入，beginRound 随 game.settings 带入）
+    mgr.setRoomSettings(tokens[0], room.roomId, { enabled: true, red: true, yao: true, erSan: true, wu: true })
+    mgr.startGame(tokens[0], room.roomId)
+    mgr.gameAction(tokens[room.game.rollerSeat], 'game.roll', {})
+    vi.advanceTimersByTime(3600)
+    expect(mgr.roomStateOf(room)).toBe('PLAYING')
+    const g = room.game
+    // 构造中盘局面：链上已有 5 张带 1 竖牌（幺三×2 幺五×2 幺六×1），链两端 {top:1, bottom:6}
+    const firstSeat = g.currentSeat
+    g.tableHistory = [{ seat: firstSeat, tiles: ['t9-1', 't9-2', 't8-1', 't8-2', 't7-1'].map(byId), side: 'bottom', mirrored: false }]
+    g.openEnds = { top: 1, bottom: 6 }
+    // 当前座位持幺六 t7-2 + 长三：幺六接 6 端暴露 1 → 端 1,1 冻结（6 张带1竖牌全上链）→ 幺账
+    g.players[firstSeat].hand = ['t7-2', 't6-1'].map(byId)
+    const ok = mgr.gameAction(tokens[firstSeat], 'game.play', { tileIds: ['t7-2'], side: 'bottom', declare: true })
+    expect(ok.error).toBeUndefined()
+    expect(g.account).toEqual({ seat: firstSeat, type: '幺账' })
+    // 本局已宣告：下一座位（持可接牌地幺 1/1）再带 declare:true 出牌 → 被拒、宣告不被覆盖
+    const nextSeat = g.currentSeat
+    expect(nextSeat).toBe((firstSeat + 1) % 4)
+    g.players[nextSeat].hand = ['t11-1', 't6-2'].map(byId)
+    const again = mgr.gameAction(tokens[nextSeat], 'game.play', { tileIds: ['t11-1'], side: 'bottom', declare: true })
+    expect(again.error).toMatchObject({ code: 'ILLEGAL', message: '本局已有人宣告算账' })
+    expect(g.account).toEqual({ seat: firstSeat, type: '幺账' })
+    vi.useRealTimers()
+  })
+})
+
 describe('房间算账设置', () => {
   it('房主 WAITING 阶段可改设置并随 room.state 广播', () => {
     const c1 = conn('甲')

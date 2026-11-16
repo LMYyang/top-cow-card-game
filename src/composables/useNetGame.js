@@ -33,8 +33,11 @@ export function useNetGame(net = sharedNet()) {
     if (rid !== undefined) roomId.value = rid
     if (yourSeat !== undefined) mySeat.value = yourSeat
     if (n) Object.assign(names, n)
-    // 宣告特效：account 首次出现（或值变化）时点亮；重连快照重放同一值不重播
-    if (v.account && (!fx.accountSplash || fx.accountSplash.seat !== v.account.seat || fx.accountSplash.type !== v.account.type)) {
+    // 宣告特效：account 首次出现（或值变化）时点亮；account 清空（新局）时重置，
+    // 防连续局同座位同账种漏播；重连快照重放同一值不重播
+    if (!v.account) {
+      fx.accountSplash = null
+    } else if (!fx.accountSplash || fx.accountSplash.seat !== v.account.seat || fx.accountSplash.type !== v.account.type) {
       fx.accountSplash = { seat: v.account.seat, type: v.account.type }
     }
   })

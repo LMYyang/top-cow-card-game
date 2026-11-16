@@ -302,10 +302,28 @@ describe('declarationFor 算账宣告判定', () => {
     const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
     expect(opts).toEqual([])
   })
+  it('三二账 1,2 形态：带1竖牌全上链后幺三接 3 端暴露 1', () => {
+    // 链上：幺三×1 + 幺五×2 + 幺六×2 + 二六（带1竖牌 5 张 + 二六），端 2 和 3
+    const chain = [tile('t9-1'), tile('t8-1'), tile('t8-2'), tile('t7-1'), tile('t7-2'), tile('t13-1')]
+    // openEnds {top:2, bottom:3}：地幺 1/1 接不上；能接 2/3 端的只有长三 3/3 或二板 2/2
+    const hand = [tile('t9-2'), tile('t6-1')] // 长三 3/3 可接 3 端（其他可接牌）
+    const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 3 }, chain, hand, FULL_ON)
+    expect(opts).toEqual([{ type: '三二账', side: 'bottom' }])
+  })
   it('三二账反例：这张牌接不了任何一端', () => {
     const hand = [tile('t9-2'), tile('t11-1')]
     const opts = declarationFor(tile('t9-2'), { top: 5, bottom: 4 }, esChain, hand, FULL_ON)
     expect(opts).toEqual([])
+  })
+
+  it('双冻结特例：幺五同时构成幺账与五账两个宣告项', () => {
+    // 链上：幺三×2 幺六×2 幺五×1 虎头×2（带1竖牌 5 张缺我这张、带5竖牌 3 张缺我这张）
+    // openEnds {top:1, bottom:5}：接 bottom(5) 暴露 1 → 1,1；接 top(1) 暴露 5 → 5,5
+    const chain = [tile('t9-1'), tile('t9-2'), tile('t7-1'), tile('t7-2'), tile('t8-1'), tile('t2-1'), tile('t2-2')]
+    const hand = [tile('t8-2'), tile('t11-1')]
+    const opts = declarationFor(tile('t8-2'), { top: 1, bottom: 5 }, chain, hand, FULL_ON)
+    // 两端各自冻结：bottom 端→幺账、top 端→五账（顺序按实现遍历序）
+    expect(opts).toEqual([{ type: '幺账', side: 'bottom' }, { type: '五账', side: 'top' }])
   })
 
   // ---- 开关与账种过滤

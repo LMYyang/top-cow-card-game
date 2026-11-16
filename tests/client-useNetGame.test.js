@@ -325,6 +325,25 @@ describe('useNetGame redeal', () => {
     expect(canRedealNow.value).toBe(false)
   })
 
+  it('accountSplash：account 出现时点亮，新局清空（account=null）时重置，防连续局同值漏播', () => {
+    const net = fakeNet()
+    const { fx } = useNetGame(net)
+    const base = { state: 'PLAYING', myHand: [], myKept: [], opponents: [], tableHistory: [], result: null, tableTile: null, openEnds: null, leaderSeat: 0, rollerSeat: 0, currentSeat: 0, redealUsed: [] }
+    // 第一局：宣告出现 → 点亮
+    net.__push('game.state', { view: { ...base, account: { seat: 2, type: '幺账' } }, fx: {}, yourSeat: 0, names: {} })
+    expect(fx.accountSplash).toEqual({ seat: 2, type: '幺账' })
+    // 后续快照重放同一值（重连）不重播（值未变，对象保持）
+    const splashRef = fx.accountSplash
+    net.__push('game.state', { view: { ...base, account: { seat: 2, type: '幺账' } }, fx: {}, yourSeat: 0, names: {} })
+    expect(fx.accountSplash).toBe(splashRef)
+    // 新局：account 清空 → 重置为 null
+    net.__push('game.state', { view: { ...base, account: null }, fx: {}, yourSeat: 0, names: {} })
+    expect(fx.accountSplash).toBeNull()
+    // 连续局同座位同账种再次宣告 → 仍能点亮（修复漏播）
+    net.__push('game.state', { view: { ...base, account: { seat: 2, type: '幺账' } }, fx: {}, yourSeat: 0, names: {} })
+    expect(fx.accountSplash).toEqual({ seat: 2, type: '幺账' })
+  })
+
   it('收到 game.redealt 推送：toast 提示申请人', () => {
     const net = fakeNet()
     useNetGame(net)
