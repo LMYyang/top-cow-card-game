@@ -139,23 +139,32 @@ export function settle(players, leaderSeat, account = null) {
     if (success) {
       const rankScores = [12, -6, -4, -2] // 翻倍
       for (const r of ranks) scores[r.seat] = rankScores[roles.indexOf(r.role)]
-    } else {
-      // 失败：宣告者包庄 -12，赢家 +12，另两输家 0（庄位排序照常，仅分数覆盖）。
-      // 宣告者若平点靠首出序成为赢家：赢家分 +12 给庄位次位（大庄），宣告者不另扣包庄分
-      if (account.seat === winnerInfo.seat) {
-        for (const r of ranks) {
-          scores[r.seat] = r.role === '赢家' ? 12 : r.role === '大庄' ? -12 : 0
-        }
-      } else {
-        for (const r of ranks) {
-          if (r.seat === account.seat) scores[r.seat] = -12
-          else if (r.seat === winnerInfo.seat) scores[r.seat] = 12
-          else scores[r.seat] = 0
-        }
+      return {
+        winner: ordered[0].seat,
+        ranks,
+        scores,
+        account: { ...account, success },
       }
     }
+    // 失败（含平点）：宣告者包庄 -12，赢家 +12，另两输家 0。
+    // 宣告者未严格最小即算输——即使平点靠首出序本可当 round 赢家也不算赢；
+    // 赢家取其余三家中扣点最小者（同点按离头牌近者，四家净手时即头牌下家）。
+    const winSeat = info
+      .filter((i) => i.seat !== account.seat)
+      .sort((a, b) => a.points - b.points || leadDist(a.seat) - leadDist(b.seat))[0].seat
+    // 角色口径：赢家=其余三家中最优者，宣告者改标「输家」，其余两家无庄位概念（role 置空）
+    for (const r of ranks) {
+      if (r.seat === winSeat) r.role = '赢家'
+      else if (r.seat === account.seat) r.role = '输家'
+      else r.role = ''
+    }
+    for (const r of ranks) {
+      if (r.seat === account.seat) scores[r.seat] = -12
+      else if (r.seat === winSeat) scores[r.seat] = 12
+      else scores[r.seat] = 0
+    }
     return {
-      winner: ordered[0].seat,
+      winner: winSeat,
       ranks,
       scores,
       account: { ...account, success },
@@ -189,17 +198,17 @@ export function canRedeal(hand) {
 // ---------- 算账（封账）宣告 ----------
 
 /** 账种定义：冻结端组合 → 账种名。key = 排序后的两端点数字串。
- *  三二账有两种冻结形态：2,3（4 张触发牌中 3 张已上链、接活端暴露另一端）与 1,2（带 1 竖牌全上链后接 3 端暴露 1）。 */
+ *  二三账有两种冻结形态：2,3（4 张触发牌中 3 张已上链、接活端暴露另一端）与 1,2（带 1 竖牌全上链后接 3 端暴露 1）。 */
 const ACCOUNT_TYPES = {
   '4,4': '红账',
   '1,1': '幺账',
   '5,5': '五账',
-  '2,3': '三二账',
-  '1,2': '三二账',
+  '2,3': '二三账',
+  '1,2': '二三账',
 }
 
 /** 账种 → settings 布尔字段 */
-const ACCOUNT_KEY = { 红账: 'red', 幺账: 'yao', 三二账: 'erSan', 五账: 'wu' }
+const ACCOUNT_KEY = { 红账: 'red', 幺账: 'yao', 二三账: 'erSan', 五账: 'wu' }
 
 /**
  * 端点 P 是否被冻结：所有含 P 的竖牌（非对子）都已在链上。
@@ -217,12 +226,14 @@ function endFrozen(p, afterChain) {
  * @param tile 手里要出的牌
  * @param openEnds 当前链两端 { top, bottom }；null（头牌首出）恒无宣告
  * @param chainTiles 链上全部已出的牌（tableHistory 的 tiles 展开）
- * @param hand 我当前手牌（含 tile；用于三二账「还有其他可接牌」判定）
+ * @param hand 我当前手牌（含 tile；用于二三账「还有其他可接牌」判定）
  * @param settings 算账设置
  * @returns {{ type: string, side: 'bottom'|'top' }[]} 可宣告项
  */
 export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
   if (!settings || !settings.enabled || !openEnds) return []
+  // 算账只能由竖牌触发：横牌（如红八 4|4）即使拼出冻结端组合也不算账
+  if (tile.type !== '竖牌') return []
   const sides = placeSides(tile, openEnds)
   if (sides.length === 0) return []
   const afterChain = [...chainTiles, tile]
@@ -235,7 +246,7 @@ export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
     if (!type) continue
     if (!endFrozen(newEnds.top, afterChain) || !endFrozen(newEnds.bottom, afterChain)) continue
     if (!settings[ACCOUNT_KEY[type]]) continue
-    if (type === '三二账') {
+    if (type === '二三账') {
       // 特殊条件：手里除这张牌外还有其他可接牌（故意不出别的偏选这张）
       const others = hand.filter((t) => t.id !== tile.id)
       if (!playableTilesEnds(others, openEnds).length) continue

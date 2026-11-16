@@ -22,8 +22,32 @@
         </view>
       </template>
     </view>
+    <!-- 牌面样式：纯客户端偏好（单机/联网通用、立即生效），不进算账设置、不联服务器 -->
+    <view class="card skin-card">
+      <view class="skin-header">
+        <text class="row-title">牌面样式</text>
+        <text class="row-sub">换一款顺眼的，单机联网通用</text>
+      </view>
+      <view class="skin-grid">
+        <view
+          v-for="s in TILE_SKINS"
+          :key="s.id"
+          class="skin-item"
+          :class="{ active: skin === s.id }"
+          @click="pickSkin(s.id)"
+        >
+          <view class="skin-preview">
+            <PlayingTile :tile="previewTile" size="xs" :skin="s.id" />
+            <PlayingTile :tile="null" size="xs" face-down :skin="s.id" />
+          </view>
+          <text class="skin-name">{{ s.name }}</text>
+          <text class="skin-desc">{{ s.desc }}</text>
+        </view>
+      </view>
+    </view>
     <view class="actions">
-      <button v-if="!readonly" class="btn-primary" @click="save">保存</button>
+      <!-- 保存按钮仅联网模式需要（房间设置走服务器）；单机模式算账开关点选即存，无必保存 -->
+      <button v-if="isNet && !readonly" class="btn-primary" @click="save">保存</button>
       <button class="btn-secondary" @click="back">返回</button>
     </view>
     <text v-if="readonly" class="readonly-hint">对局设置由房主修改</text>
@@ -34,12 +58,14 @@
 import { reactive, ref, onUnmounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { DEFAULT_SETTINGS, normalizeSettings } from '../../core/settings.js'
+import { TILE_SKINS, loadSkin, saveSkin } from '../../core/tileSkins.js'
 import { sharedNet } from '../../utils/net.js'
+import PlayingTile from '../../components/PlayingTile.vue'
 
 const ACCOUNTS = [
   { key: 'red', label: '红账', desc: '红十封住 4 点（链上已有另一张红十）' },
   { key: 'yao', label: '幺账', desc: '带 1 竖牌封住 1 点（其余 5 张带 1 竖牌已上链）' },
-  { key: 'erSan', label: '三二账', desc: '幺三/三六/二六封住 2、3 点（其余 3 张已上链）' },
+  { key: 'erSan', label: '二三账', desc: '幺三/三六/二六封住 2、3 点（其余 3 张已上链）' },
   { key: 'wu', label: '五账', desc: '带 5 竖牌封住 5 点（其余 3 张带 5 竖牌已上链）' },
 ]
 
@@ -85,6 +111,14 @@ function toggleAcc(key) {
   draft[key] = !draft[key]
 }
 
+// ---- 牌面样式：点选即存即生效（预览用真实 PlayingTile 传 skin prop，无需保存按钮） ----
+const skin = ref(loadSkin())
+const previewTile = { id: 'skin-demo', name: '大天', a: 6, b: 6 } // 6|6 预览：两半区都有红点带，最能看出配色差异
+function pickSkin(id) {
+  skin.value = id
+  saveSkin(id)
+}
+
 // 联网保存走 net.request 而非 useNetGame：后者每次调用新建实例（新 view/fx + 重挂
 // game.state 处理器并触发 reconnect 握手拉快照），设置页只需一条请求，直接用 sharedNet 单例即可
 async function save() {
@@ -128,4 +162,22 @@ function back() {
 .checkbox.on { background: #c9a227; border-color: #c9a227; color: #fff; }
 .actions { display: flex; flex-direction: column; gap: 20rpx; margin-top: 16rpx; }
 .readonly-hint { text-align: center; font-size: 22rpx; color: #b0a685; }
+/* 牌面样式选择 */
+.skin-card { gap: 16rpx; padding: 24rpx; }
+.skin-header { display: flex; flex-direction: column; gap: 6rpx; }
+.skin-grid { display: flex; flex-wrap: wrap; gap: 20rpx; }
+.skin-item {
+  flex: 1 1 calc(50% - 10rpx);
+  min-width: 280rpx;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; gap: 6rpx;
+  padding: 20rpx 12rpx; border-radius: 14rpx;
+  background: rgba(26, 16, 4, 0.35); border: 2rpx solid #4a3c22;
+  transition: border-color 0.15s, background 0.15s;
+}
+.skin-item.active { border-color: #c9a227; background: rgba(201, 162, 39, 0.14); }
+.skin-preview { display: flex; gap: 12rpx; align-items: center; }
+.skin-name { font-size: 26rpx; color: #f5f0e1; font-weight: bold; }
+.skin-item.active .skin-name { color: #c9a227; }
+.skin-desc { font-size: 20rpx; color: #b0a685; }
 </style>

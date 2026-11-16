@@ -13,12 +13,12 @@
 
 **账种触发速查**（spec 2.1）：
 
-| 账种 | 冻结后端点 | 触发牌 | 三二账额外条件 |
+| 账种 | 冻结后端点 | 触发牌 | 二三账额外条件 |
 |---|---|---|---|
 | 红账 | 4,4 | 红十 t4-x | — |
 | 幺账 | 1,1 | 幺三/幺五/幺六 | — |
 | 五账 | 5,5 | 虎头/幺五 | — |
-| 三二账 | 2,3 | 幺三/三六/二六 | 手里还有其他可接牌 |
+| 二三账 | 2,3 | 幺三/三六/二六 | 手里还有其他可接牌 |
 
 **注意：所有文件路径一律用 Windows 绝对路径（带盘符反斜杠），如 `D:\demo\top-cow-card-game\src\core\rules.js`。**
 
@@ -176,21 +176,21 @@ describe('declarationFor 算账宣告判定', () => {
     expect(opts).toEqual([{ type: '五账', side: 'bottom' }])
   })
 
-  // ---- 三二账：链上有幺三×1 + 三六 + 二六（4 张中的 3 张），我持幺三 t9-2，两端 1 和 2，
+  // ---- 二三账：链上有幺三×1 + 三六 + 二六（4 张中的 3 张），我持幺三 t9-2，两端 1 和 2，
   //      接 1 端暴露 3 → 端 2,3 冻结（幺三×2/三六/二六全上链）
   const esChain = [tile('t9-1'), tile('t12-1'), tile('t13-1')]
-  it('三二账正例：手里有其他可接牌时选这张返回三二账', () => {
+  it('二三账正例：手里有其他可接牌时选这张返回二三账', () => {
     const hand = [tile('t9-2'), tile('t11-1'), tile('t1-1')]
     // t11-1 地幺 1/1 可接 1 端（=其他可接牌）
     const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
-    expect(opts).toEqual([{ type: '三二账', side: 'bottom' }])
+    expect(opts).toEqual([{ type: '二三账', side: 'bottom' }])
   })
-  it('三二账反例：手里没有其他可接牌时不弹算账', () => {
+  it('二三账反例：手里没有其他可接牌时不弹算账', () => {
     const hand = [tile('t9-2'), tile('t3-1')] // 长三 3/3 接不上 1/2 端
     const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
     expect(opts).toEqual([])
   })
-  it('三二账反例：这张牌接不了任何一端', () => {
+  it('二三账反例：这张牌接不了任何一端', () => {
     const hand = [tile('t9-2'), tile('t11-1')]
     const opts = declarationFor(tile('t9-2'), { top: 5, bottom: 4 }, esChain, hand, FULL_ON)
     expect(opts).toEqual([])
@@ -232,11 +232,11 @@ const ACCOUNT_TYPES = {
   '4,4': '红账',
   '1,1': '幺账',
   '5,5': '五账',
-  '2,3': '三二账',
+  '2,3': '二三账',
 }
 
 /** 账种 → settings 布尔字段 */
-const ACCOUNT_KEY = { 红账: 'red', 幺账: 'yao', 三二账: 'erSan', 五账: 'wu' }
+const ACCOUNT_KEY = { 红账: 'red', 幺账: 'yao', 二三账: 'erSan', 五账: 'wu' }
 
 /**
  * 端点 P 是否被冻结：所有含 P 的竖牌（非对子）都已在链上。
@@ -254,7 +254,7 @@ function endFrozen(p, afterChain) {
  * @param tile 手里要出的牌
  * @param openEnds 当前链两端 { top, bottom }；null（头牌首出）恒无宣告
  * @param chainTiles 链上全部已出的牌（tableHistory 的 tiles 展开）
- * @param hand 我当前手牌（含 tile；用于三二账「还有其他可接牌」判定）
+ * @param hand 我当前手牌（含 tile；用于二三账「还有其他可接牌」判定）
  * @param settings 算账设置
  * @returns {{ type: string, side: 'bottom'|'top' }[]} 可宣告项
  */
@@ -274,7 +274,7 @@ export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
     if (!type) continue
     if (!endFrozen(newEnds.top, afterChain) || !endFrozen(newEnds.bottom, afterChain)) continue
     if (!settings[ACCOUNT_KEY[type]]) continue
-    if (type === '三二账') {
+    if (type === '二三账') {
       // 特殊条件：手里除这张牌外还有其他可接牌（故意不出别的偏选这张）
       const others = hand.filter((t) => t.id !== tile.id)
       if (!playableTilesEnds(others, openEnds).length) continue
@@ -415,10 +415,10 @@ describe('settle 算账结算', () => {
       { seat: 2, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-1')] }, // 8
       { seat: 3, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-2')] }, // 8
     ]
-    const result = settle(players, 0, { seat: 0, type: '三二账' })
+    const result = settle(players, 0, { seat: 0, type: '二三账' })
     expect(result.winner).toBe(1)
     expect(result.scores).toEqual({ 0: -12, 1: 12, 2: 0, 3: 0 })
-    expect(result.account).toEqual({ seat: 0, type: '三二账', success: false })
+    expect(result.account).toEqual({ seat: 0, type: '二三账', success: false })
   })
   it('无宣告（account=null）结算与旧版一致', () => {
     const players = [
@@ -927,7 +927,7 @@ import { sharedNet } from '../../utils/net.js'
 const ACCOUNTS = [
   { key: 'red', label: '红账', desc: '红十封住 4 点（链上已有另一张红十）' },
   { key: 'yao', label: '幺账', desc: '带 1 竖牌封住 1 点（其余 5 张带 1 竖牌已上链）' },
-  { key: 'erSan', label: '三二账', desc: '幺三/三六/二六封住 2、3 点（其余 3 张已上链）' },
+  { key: 'erSan', label: '二三账', desc: '幺三/三六/二六封住 2、3 点（其余 3 张已上链）' },
   { key: 'wu', label: '五账', desc: '带 5 竖牌封住 5 点（其余 3 张带 5 竖牌已上链）' },
 ]
 
@@ -1105,7 +1105,7 @@ declarations: { type: Array, default: [] }, // [{ type, side }] 选中牌的可�
 .btn-declare { background: #a04030; border-color: #c9a227; color: #f5f0e1; }
 ```
 
-5) script 增加 `no-declare` 语义：**不算账 = 红账/幺账/五账接另一端出；三二账收回重选**。此逻辑放 game.vue（知道上下文），HandArea 只透传事件：emits 改为 `['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick', 'declare', 'no-declare']`。
+5) script 增加 `no-declare` 语义：**不算账 = 红账/幺账/五账接另一端出；二三账收回重选**。此逻辑放 game.vue（知道上下文），HandArea 只透传事件：emits 改为 `['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick', 'declare', 'no-declare']`。
 
 6) 双击快速出牌守卫：可宣告时不触发双击直出（`bothEnds.value || declarations.length` 时禁用）——修改 `onTileTap`：
 
@@ -1154,12 +1154,12 @@ async function onDeclare({ id, side }) {
   }
 }
 
-/** 不算账：红/幺/五账 = 接另一端照常出；三二账 = 收回重选 */
+/** 不算账：红/幺/五账 = 接另一端照常出；二三账 = 收回重选 */
 async function onNoDeclare({ id }) {
   const t = view.value.myHand.find((x) => x.id === id)
   if (!t) return
   const decl = myDeclarations.value
-  if (decl.length && decl[0].type === '三二账') {
+  if (decl.length && decl[0].type === '二三账') {
     selectedId.value = null // 收回重选
     uni.showToast({ title: '已收回，请选择其他牌', icon: 'none' })
     return
@@ -1276,7 +1276,7 @@ watch(accountSlammed, (v) => {
 script：
 
 ```js
-const ACCOUNT_LABEL = { 红账: '红账', 幺账: '幺账', 三二账: '三二账', 五账: '五账' }
+const ACCOUNT_LABEL = { 红账: '红账', 幺账: '幺账', 二三账: '二三账', 五账: '五账' }
 function accountTag(seat) {
   const a = view.value.result?.account
   if (!a || a.seat !== seat) return ''
@@ -1301,7 +1301,7 @@ Expected: 构建成功
 1. 主菜单 → 游戏设置：开关关闭 → 保存；再开 → 四项默认全选 → 保存
 2. 开始游戏（单机）：打几局确认无宣告按钮时行为不变
 3. 构造红账：AI 出红十后我持另一张红十接 6 端 → 弹「算红账/不算账」→ 点算账 → 特效播放 → 结算卡显示「红账 ✓×2」或「✗包庄」
-4. 三二账「不算账」→ 牌收回
+4. 二三账「不算账」→ 牌收回
 5. 房间页：房主改设置 → 开局 → 牌桌宣告正常；非房主只读
 
 - [ ] **Step 5: 提交**

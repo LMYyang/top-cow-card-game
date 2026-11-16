@@ -24,8 +24,9 @@
           <view class="dice" :class="{ rolling: fx.diceRolling, landed: diceLanded }">{{ diceFace }}</view>
           <!-- 落定后先看点数，稍后揭示头牌，再自动进入出牌阶段 -->
           <view v-if="leaderRevealed" class="dice-result">{{ diceResultText }}</view>
-          <!-- 掷骰权在我时才显示按钮；他人掷骰时到点自动掷，仅显示状态文案（solo: 0=我；net: 服务器 rollerSeat） -->
-          <button v-else-if="diceRollerSeat === mySeatVal" class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
+          <!-- 掷骰权在我时才显示按钮；他人掷骰时到点自动掷，仅显示状态文案（solo: 0=我；net: 服务器 rollerSeat）。
+               落定（fx.dice 有值）后隐藏按钮，避免落定→揭示头牌间隙按钮复活被重复点击；重开发牌由 resetDiceUi 清 fx.dice 后恢复 -->
+          <button v-else-if="diceRollerSeat === mySeatVal && !fx.dice" class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
           <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
@@ -39,7 +40,9 @@
           <button v-if="canRedealNow" class="btn-primary btn-redeal" :disabled="redealBusy" @click="onRedeal">申请重新发牌</button>
         </template>
         <template v-else-if="view.state === 'SETTLE'">
-          <TableTimeline :history="view.tableHistory" />
+          <!-- 终局最后一张也要飞：latest-hidden 必须传，否则状态翻 SETTLE 时此分支重新挂载
+               TableTimeline（prop 缺省 false），终牌在飞行途中就直接显示在桌上穿帮 -->
+          <TableTimeline :history="view.tableHistory" :latest-hidden="latestHidden" />
           <!-- 终局节奏：终牌落定先显示本局结束，停顿后亮牌（settleBrief 由客户端编排，两模式一致） -->
           <view v-if="settleBrief" class="settle-brief">本局结束</view>
         </template>
@@ -107,13 +110,19 @@
       <view class="settle-card" :class="{ 'winner-card': iAmWinner }">
         <text class="settle-title" :class="{ 'winner-title': iAmWinner }">{{ iAmWinner ? '🏆 恭喜获胜' : '本局结算' }}</text>
         <view v-for="r in settleRanks" :key="r.seat" class="settle-row" :class="{ winner: r.seat === view.result.winner }">
-          <view class="settle-player">
-            <PlayerAvatar :seat="r.seat" size="sm" />
-            <text>{{ labelOf(r.seat) }}{{ r.seat === view.result.winner ? ' 🏆' : '' }}</text>
+          <PlayerAvatar :seat="r.seat" size="sm" />
+          <!-- 与历史记录弹框同格式：昵称/庄位两行 + 扣点（算账徽章挂扣点下方）+ 得分 -->
+          <view class="settle-who">
+            <text class="settle-name">{{ labelOf(r.seat) }}{{ r.seat === view.result.winner ? ' 🏆' : '' }}</text>
+            <text class="settle-role">{{ r.role }}</text>
           </view>
-          <text>扣 {{ r.points }} 点 · {{ r.role }}</text>
-          <text v-if="accountTag(r.seat)" class="account-tag" :class="{ fail: !view.result.account.success }">{{ accountTag(r.seat) }}</text>
-          <text class="score">{{ view.result.scores[r.seat] > 0 ? '+' : '' }}{{ view.result.scores[r.seat] }}</text>
+          <view class="settle-points">
+            <text>扣 {{ r.points }} 点</text>
+            <text v-if="accountTag(r.seat)" class="account-tag" :class="{ fail: !view.result.account.success }">{{ accountTag(r.seat) }}</text>
+          </view>
+          <text class="score" :class="{ negative: view.result.scores[r.seat] < 0 }">
+            {{ view.result.scores[r.seat] > 0 ? '+' : '' }}{{ view.result.scores[r.seat] }} 积分
+          </text>
         </view>
         <view class="settle-actions">
           <button class="btn-primary" @click="restart">再来一局</button>
@@ -453,12 +462,12 @@ async function onDeclare({ id, side }) {
   }
 }
 
-/** 不算账：红/幺/五账 = 接另一端照常出；三二账 = 收回重选 */
+/** 不算账：红/幺/五账 = 接另一端照常出；二三账 = 收回重选 */
 async function onNoDeclare({ id }) {
   const t = view.value.myHand.find((x) => x.id === id)
   if (!t) return
   const decl = myDeclarations.value
-  if (decl.length && decl[0].type === '三二账') {
+  if (decl.length && decl[0].type === '二三账') {
     selectedId.value = null // 收回重选
     uni.showToast({ title: '已收回，请选择其他牌', icon: 'none' })
     return
@@ -601,7 +610,13 @@ const flyStyle = computed(() => ({
 
 function playFly(entry) {
   const f = flyFromEntry(entry)
-  if (!f) return
+  if (!f) {
+    // 起飞失败（锚点缺失等，扣牌条目根本不会进这里）：latestHidden 已由 watcher 在
+    // 调用前先行置 true，这里兜底定时放行，保证隐藏状态必然解除、不留永久隐形
+    clearTimeout(flyTimer)
+    flyTimer = setTimeout(() => { latestHidden.value = false }, 50)
+    return
+  }
   clearTimeout(flyTimer)
   fly.tile = f.tile
   fly.mirrored = f.mirrored
@@ -609,7 +624,7 @@ function playFly(entry) {
   fly.fromY = f.from.y
   fly.moving = false
   flyLanded.value = false // 起飞：终局场景下压住亮牌/结算直到落地
-  latestHidden.value = true // 飞行期间隐藏链上真牌，落地瞬间显现
+  // latestHidden 已由 tableHistory watcher 在调用前置位（先隐藏真牌再起飞），此处不重复
   // 双 rAF：起点样式已渲染且 Vue 已把新 entry 渲染进 DOM（#latest-entry-anchor 指向新牌），
   // 此时才解析终点并切到过渡态（watch 触发瞬间锚点还是旧牌，立即取会差一位）
   requestAnimationFrame(() => {
@@ -653,7 +668,13 @@ watch(
   (n, old) => {
     if (!n || (old !== undefined && n <= old)) return
     const entry = view.value.tableHistory[n - 1]
-    if (entry?.tiles) playFly(entry)
+    if (entry?.tiles) {
+      // 先隐藏链上真牌再起飞：playFly 内部有起飞失败兜底放行，隐藏必然最终解除；
+      // 若放在 playFly 内部成功路径才置 true，起飞失败（锚点缺失）时最新条目直接裸露穿帮。
+      // 扣牌条目（无 tiles）不隐藏——扣牌不进时间线，无需动画
+      latestHidden.value = true
+      playFly(entry)
+    }
   }
 )
 
@@ -928,12 +949,18 @@ function confirmGoHome() {
   100% { transform: rotateX(-80deg) rotateZ(-6deg); }
 }
 .settle-row {
-  display: flex; justify-content: space-between; align-items: center;
-  background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 20rpx 24rpx; font-size: 28rpx;
+  display: flex; align-items: center; gap: 16rpx;
+  background: rgba(0,0,0,0.25); border-radius: 12rpx; padding: 16rpx 24rpx; font-size: 28rpx;
 }
 .settle-row.winner { border: 2rpx solid #c9a227; }
-.settle-player { display: flex; align-items: center; gap: 12rpx; }
-.settle-row .score { font-weight: bold; }
+/* 与历史记录弹框同构：头像 + 昵称/庄位两行 + 扣点（算账徽章下方）+ 得分 */
+.settle-who { display: flex; flex-direction: column; gap: 2rpx; width: 140rpx; flex: none; }
+.settle-name { font-size: 26rpx; color: #f5f0e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settle-role { font-size: 22rpx; color: #b0a685; }
+.settle-row.winner .settle-role { color: #c9a227; font-weight: bold; }
+.settle-points { font-size: 24rpx; color: #b0a685; flex: 1; display: flex; flex-direction: column; gap: 4rpx; align-items: center; }
+.settle-row .score { font-weight: bold; color: #c9a227; width: 140rpx; text-align: right; }
+.settle-row .score.negative { color: #a04030; }
 .settle-actions { display: flex; flex-direction: column; gap: 16rpx; margin-top: 12rpx; }
 .home-confirm-card { width: 560rpx; gap: 28rpx; }
 .home-confirm-text { font-size: 28rpx; color: #f5f0e1; text-align: center; line-height: 1.6; }
@@ -949,9 +976,12 @@ function confirmGoHome() {
 /* 定位锚点包裹层：不改变内部布局（display: contents），仅提供 getElementById 锚点 */
 #opp-top-anchor, #opp-left-anchor, #opp-right-anchor, #hand-anchor { display: contents; }
 
-/* 结算卡账目标签：宣告者行显示账种与结果（成功金色 ×2 / 失败红色包庄） */
-.account-tag { font-size: 22rpx; color: #c9a227; }
-.account-tag.fail { color: #a04030; }
+/* 结算卡账目标签：与历史记录徽章同款药丸（成功金底 / 失败红底包庄，随扣点列居中） */
+.account-tag {
+  font-size: 20rpx; color: #f5f0e1; background: rgba(201, 162, 39, 0.22);
+  padding: 2rpx 12rpx; border-radius: 999rpx; white-space: nowrap;
+}
+.account-tag.fail { color: #ffd9c9; background: rgba(160, 64, 48, 0.55); }
 
 /* 算账拍桌特效层：fixed 全屏，pointer-events 穿透 */
 .account-splash-layer { position: fixed; inset: 0; z-index: 95; pointer-events: none; display: flex; align-items: center; justify-content: center; }

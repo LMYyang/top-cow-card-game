@@ -4,16 +4,17 @@ import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { RoomManager } from './rooms.js'
+import { readPort } from './port.js'
 
 /**
  * 顶牛子联网对战服务器。
  * createServerApp(port, opts) 返回 { httpServer, wss, port, mgr }，便于测试用随机端口与短心跳。
- * node index.js 直接启动（默认 3001，PORT 环境变量可覆盖）。
+ * node index.js 直接启动（端口见根目录 config.json 的 wsPort，PORT 环境变量可覆盖）。
  */
 
 const HEARTBEAT_MS = 15_000 // 心跳周期：连续两轮（~30s）ping 无回应判定死链
 
-export function createServerApp(port = 3001, { heartbeatMs = HEARTBEAT_MS } = {}) {
+export function createServerApp(port = readPort(), { heartbeatMs = HEARTBEAT_MS } = {}) {
   const mgr = new RoomManager()
   // 同端口托管 H5 静态构建产物（dist/build/h5）：单服务部署到 Render 时前端 + ws 共用一个端口。
   // 目录不存在（纯后端部署/本地只跑 ws）时退回 426，行为与原先一致。
@@ -224,6 +225,6 @@ function sanitizeName(name) {
 // 直接运行时启动（被 import 时不启动）
 const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : ''
 if (entry && entry === import.meta.url) {
-  const app = createServerApp(Number(process.env.PORT || 3001))
+  const app = createServerApp(Number(process.env.PORT || readPort()))
   app.httpServer.listen(app.port, () => console.log(`[dingniuzi] server listening on :${app.port}（static: ${process.env.STATIC_DIR || '../dist/build/h5'}）`))
 }

@@ -464,6 +464,11 @@ describe('settle 算账结算', () => {
     expect(result.scores[3]).toBe(12)
     expect(result.scores[1]).toBe(0)
     expect(result.scores[2]).toBe(0)
+    // 失败局角色口径：赢家保留，宣告者=输家，其余两家无庄位概念（空）
+    expect(result.ranks.find(r => r.seat === 3).role).toBe('赢家')
+    expect(result.ranks.find(r => r.seat === 0).role).toBe('输家')
+    expect(result.ranks.find(r => r.seat === 1).role).toBe('')
+    expect(result.ranks.find(r => r.seat === 2).role).toBe('')
   })
   it('宣告者非最小：失败包庄 -12 赢家 +12 其余 0', () => {
     const players = [
@@ -472,10 +477,15 @@ describe('settle 算账结算', () => {
       { seat: 2, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-1')] }, // 8
       { seat: 3, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-2')] }, // 8
     ]
-    const result = settle(players, 0, { seat: 0, type: '三二账' })
+    const result = settle(players, 0, { seat: 0, type: '二三账' })
     expect(result.winner).toBe(1)
     expect(result.scores).toEqual({ 0: -12, 1: 12, 2: 0, 3: 0 })
-    expect(result.account).toEqual({ seat: 0, type: '三二账', success: false })
+    expect(result.account).toEqual({ seat: 0, type: '二三账', success: false })
+    // 失败局角色：赢家 seat1 保留，宣告者 seat0=输家，seat2/seat3 庄位概念置空
+    expect(result.ranks.find(r => r.seat === 1).role).toBe('赢家')
+    expect(result.ranks.find(r => r.seat === 0).role).toBe('输家')
+    expect(result.ranks.find(r => r.seat === 2).role).toBe('')
+    expect(result.ranks.find(r => r.seat === 3).role).toBe('')
   })
   it('无宣告（account=null）结算与旧版一致', () => {
     const players = [
@@ -489,17 +499,38 @@ describe('settle 算账结算', () => {
     expect(result.scores).toEqual({ 0: 6, 1: -1, 2: -3, 3: -2 })
     expect(result.account).toBe(null)
   })
-  it('宣告者平点靠首出序成为赢家（allClean）：赢家 +12、大庄包庄 -12', () => {
+  it('宣告者平点（allClean 四家净手）：算失败，赢家=其余三家中最优（头牌下家）', () => {
     const players = [
-      { seat: 0, hand: [], kept: [] }, // 宣告者=头牌，扣 0 点
+      { seat: 0, hand: [], kept: [] }, // 宣告者=头牌，扣 0 点（与其他三家平点）
       { seat: 1, hand: [], kept: [] },
       { seat: 2, hand: [], kept: [] },
       { seat: 3, hand: [], kept: [] },
     ]
     const result = settle(players, 0, { seat: 0, type: '五账' })
-    // 四家净手：头牌(宣告者)赢 +12，大庄(头牌下家 seat1)包庄 -12，其余 0；零和保持
-    expect(result.winner).toBe(0)
+    // 平点即失败：宣告者绝不因首出序成为赢家；赢家取其余三家中扣点最小者（同点离头牌近者=头牌下家 seat1）
+    expect(result.winner).toBe(1)
     expect(result.account).toEqual({ seat: 0, type: '五账', success: false })
-    expect(result.scores).toEqual({ 0: 12, 1: -12, 2: 0, 3: 0 })
+    expect(result.scores).toEqual({ 0: -12, 1: 12, 2: 0, 3: 0 })
+    expect(result.ranks.find(r => r.seat === 1).role).toBe('赢家')
+    expect(result.ranks.find(r => r.seat === 0).role).toBe('输家')
+    expect(result.ranks.find(r => r.seat === 2).role).toBe('')
+    expect(result.ranks.find(r => r.seat === 3).role).toBe('')
+  })
+  it('宣告者与一人平点且同为最少：宣告者输，赢家=其余三家中扣点最小者（平点对手）', () => {
+    // t10 二板(4点)、t11 地幺(2点)、t9 一三(4点)、t12 三六(9点)、t13 二六(8点)
+    const players = [
+      { seat: 0, hand: [], kept: [byId('t10-1'), byId('t11-1'), byId('t9-1')] },               // 4+2+4=10 点 宣告者
+      { seat: 1, hand: [], kept: [byId('t10-2'), byId('t11-2'), byId('t9-2')] },               // 10 点 平点
+      { seat: 2, hand: [], kept: [byId('t10-1'), byId('t12-1')] },                             // 4+9=13 点
+      { seat: 3, hand: [], kept: [byId('t10-2'), byId('t13-1')] },                             // 4+8=12 点
+    ]
+    const result = settle(players, 0, { seat: 0, type: '红账' })
+    // 宣告者 10 点与 seat1 平点同为最少 → 非严格最小 → 失败；
+    // 旧逻辑宣告者靠首出序成为赢家，新逻辑赢家=其余三家最小扣点者（=平点对手 seat1）
+    expect(result.winner).toBe(1)
+    expect(result.account).toEqual({ seat: 0, type: '红账', success: false })
+    expect(result.scores).toEqual({ 0: -12, 1: 12, 2: 0, 3: 0 })
+    expect(result.ranks.find(r => r.seat === 1).role).toBe('赢家')
+    expect(result.ranks.find(r => r.seat === 0).role).toBe('输家')
   })
 })

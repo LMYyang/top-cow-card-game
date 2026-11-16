@@ -250,8 +250,9 @@ describe('declarationFor 算账宣告判定', () => {
     expect(opts).toEqual([])
   })
   it('红账反例：红八（横牌）不触发', () => {
+    // 两张红十全在链上（4 端已冻结），红八接 4 端拼出 4,4——仅因横牌不算账
     const hand = [tile('t5-1'), tile('t5-2')]
-    const opts = declarationFor(tile('t5-1'), { top: 4, bottom: 4 }, [tile('t4-1')], hand, FULL_ON)
+    const opts = declarationFor(tile('t5-1'), { top: 4, bottom: 4 }, [tile('t4-1'), tile('t4-2')], hand, FULL_ON)
     expect(opts).toEqual([])
   })
 
@@ -287,30 +288,30 @@ describe('declarationFor 算账宣告判定', () => {
     expect(opts).toEqual([{ type: '五账', side: 'bottom' }])
   })
 
-  // ---- 三二账：链上有幺三×1 + 三六 + 二六（4 张中的 3 张），我持幺三 t9-2，两端 1 和 2，
+  // ---- 二三账：链上有幺三×1 + 三六 + 二六（4 张中的 3 张），我持幺三 t9-2，两端 1 和 2，
   //      接 1 端暴露 3 → 端 2,3 冻结（幺三×2/三六/二六全上链）
   // （1 端在链底：bottom=1；接 bottom 暴露 3 → 端 2,3 封账）
   const esChain = [tile('t9-1'), tile('t12-1'), tile('t13-1')]
-  it('三二账正例：手里有其他可接牌时选这张返回三二账', () => {
+  it('二三账正例：手里有其他可接牌时选这张返回二三账', () => {
     const hand = [tile('t9-2'), tile('t11-1'), tile('t1-1')]
     // t11-1 地幺 1/1 可接 1 端（=其他可接牌）
     const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
-    expect(opts).toEqual([{ type: '三二账', side: 'bottom' }])
+    expect(opts).toEqual([{ type: '二三账', side: 'bottom' }])
   })
-  it('三二账反例：手里没有其他可接牌时不弹算账', () => {
+  it('二三账反例：手里没有其他可接牌时不弹算账', () => {
     const hand = [tile('t9-2'), tile('t3-1')] // 长三 3/3 接不上 1/2 端
     const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
     expect(opts).toEqual([])
   })
-  it('三二账 1,2 形态：带1竖牌全上链后幺三接 3 端暴露 1', () => {
+  it('二三账 1,2 形态：带1竖牌全上链后幺三接 3 端暴露 1', () => {
     // 链上：幺三×1 + 幺五×2 + 幺六×2 + 二六（带1竖牌 5 张 + 二六），端 2 和 3
     const chain = [tile('t9-1'), tile('t8-1'), tile('t8-2'), tile('t7-1'), tile('t7-2'), tile('t13-1')]
     // openEnds {top:2, bottom:3}：地幺 1/1 接不上；能接 2/3 端的只有长三 3/3 或二板 2/2
     const hand = [tile('t9-2'), tile('t6-1')] // 长三 3/3 可接 3 端（其他可接牌）
     const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 3 }, chain, hand, FULL_ON)
-    expect(opts).toEqual([{ type: '三二账', side: 'bottom' }])
+    expect(opts).toEqual([{ type: '二三账', side: 'bottom' }])
   })
-  it('三二账反例：这张牌接不了任何一端', () => {
+  it('二三账反例：这张牌接不了任何一端', () => {
     const hand = [tile('t9-2'), tile('t11-1')]
     const opts = declarationFor(tile('t9-2'), { top: 5, bottom: 4 }, esChain, hand, FULL_ON)
     expect(opts).toEqual([])

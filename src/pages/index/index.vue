@@ -65,16 +65,20 @@
                 :class="{ me: seat === 0, winner: h.roles[seat] === '赢家', net: historyMode === 'net' }"
               >
                 <PlayerAvatar :seat="seat" size="sm" />
-                <text class="d-name">{{ labelOf(h, seat) }}</text>
-                <text class="d-role">{{ h.roles[seat] }}</text>
-                <text class="d-points">扣 {{ h.points[seat] }} 点</text>
+                <view class="d-who">
+                  <text class="d-name">{{ labelOf(h, seat) }}</text>
+                  <text class="d-role">{{ h.roles[seat] }}</text>
+                </view>
+                <!-- 扣点列：扣点在上，算账徽章挂在扣点下方（仅宣告座位行有） -->
+                <view class="d-points">
+                  <text>扣 {{ h.points[seat] }} 点</text>
+                  <text v-if="h.account && h.account.seat === seat" class="d-account" :class="{ fail: !h.account.success }">
+                    {{ h.account.type + (h.account.success ? ' ✓' : ' ✗包庄') }}
+                  </text>
+                </view>
                 <text class="d-score" :class="{ negative: h.scores[seat] < 0 }">
-                  {{ h.scores[seat] > 0 ? '+' : '' }}{{ h.scores[seat] }}
+                  {{ h.scores[seat] > 0 ? '+' : '' }}{{ h.scores[seat] }} 积分
                 </text>
-                <text v-if="h.account && h.account.seat === seat" class="d-account" :class="{ fail: !h.account.success }">
-                  {{ h.account.type }}{{ h.account.success ? ' ✓' : ' ✗包庄' }}
-                </text>
-                <text v-if="historyMode !== 'net'" class="d-total">累计 {{ h.totalsAfter[seat] || 0 }}</text>
               </view>
             </view>
           </view>
@@ -154,16 +158,11 @@ function formatTime(ts) {
 }
 
 // 打完一局返回主菜单时刷新战绩与历史（navigateBack 复用页面实例，setup 不会重跑）。
-// backfillNetStats：把修复前已打、未计入统计的联网局一次性补进 dingniuzi_stats
-// ——迁移完成后 dingniuzi_stats 只剩单机口径（联网统计改为从历史条目实时汇总，不再写入）
+// backfillNetStats：首次运行时把修复前混进 dingniuzi_stats 的联网局一次性剔除（历史只留 50 条，
+// 早期联网局若已被截断清掉则无法精确还原，以剩余历史为准做一次性修正）；
+// 之后 dingniuzi_stats 本就是纯单机口径（每局 solo +1，net 局从不写入），直接展示即可
 onShow(() => {
-  const stats = backfillNetStats()
-  const netEntries = (uni.getStorageSync('dingniuzi_history') || []).filter((h) => h.mode === 'net')
-  // 统计里减去联网局部分，得到纯单机口径（backfill 后 stats.rounds 含联网历史数）
-  statsRaw.value = {
-    rounds: Math.max(0, stats.rounds - netEntries.length),
-    totalScore: stats.totalScore - netEntries.reduce((s, h) => s + (h.scores?.[0] || 0), 0),
-  }
+  statsRaw.value = backfillNetStats()
   historyRaw.value = uni.getStorageSync('dingniuzi_history') || []
 })
 
@@ -258,19 +257,18 @@ function openSettings() {
 .detail-row { display: flex; align-items: center; gap: 12rpx; padding: 6rpx 8rpx; border-radius: 8rpx; }
 .detail-row.me { background: rgba(201, 162, 39, 0.12); }
 .detail-row.winner .d-role { color: #c9a227; font-weight: bold; }
-/* 联网条目：昵称固定宽（超长省略），其余列宽与单机一致——四行列纵向对齐 */
-.detail-row.net .d-name {
-  width: 176rpx; flex: none;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.d-who { display: flex; flex-direction: column; gap: 2rpx; width: 120rpx; flex: none; }
+.d-name { font-size: 22rpx; color: #f5f0e1; width: 120rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-role { font-size: 20rpx; color: #b0a685; }
+.d-points { font-size: 22rpx; color: #b0a685; flex: 1; display: flex; flex-direction: column; gap: 4rpx; align-items: center; }
+/* 账目徽章：药丸样式，挂在宣告座位扣点下方（随扣点列居中） */
+.d-account {
+  font-size: 20rpx; color: #f5f0e1; background: rgba(201, 162, 39, 0.22);
+  padding: 2rpx 12rpx; border-radius: 999rpx; white-space: nowrap;
 }
-.d-name { font-size: 22rpx; color: #f5f0e1; width: 64rpx; }
-.d-role { font-size: 22rpx; color: #b0a685; width: 80rpx; }
-.d-points { font-size: 22rpx; color: #b0a685; flex: 1; }
-.d-account { font-size: 22rpx; color: #c9a227; width: 110rpx; text-align: right; }
-.d-account.fail { color: #a04030; }
-.d-score { font-size: 24rpx; font-weight: bold; color: #c9a227; width: 64rpx; text-align: right; }
+.d-account.fail { color: #ffd9c9; background: rgba(160, 64, 48, 0.55); }
+.d-score { font-size: 24rpx; font-weight: bold; color: #c9a227; width: 140rpx; text-align: right; }
 .d-score.negative { color: #a04030; }
-.d-total { font-size: 22rpx; color: #b0a685; width: 96rpx; text-align: right; }
 /* 分页 */
 .pagination { display: flex; align-items: center; justify-content: center; gap: 24rpx; padding: 16rpx 0; }
 .page-btn {

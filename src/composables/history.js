@@ -14,15 +14,16 @@ export function loadHistory() {
 
 /**
  * 一次性迁移：修复早期「联网局只写历史、统计只记单机」版本造成的 dingniuzi_stats 缺口。
- * 跑过一次后不再执行。返回 dingniuzi_stats 现值（调用方自行减去联网部分得纯单机口径）。
+ * 跑过一次后不再执行。返回纯单机口径的统计（已扣除迁移时从历史里并进来的联网部分）。
  */
 export function backfillNetStats() {
   if (uni.getStorageSync(BACKFILL_KEY)) return uni.getStorageSync(STATS_KEY) || { rounds: 0, totalScore: 0 }
   const netEntries = loadHistory().filter((h) => h.mode === 'net')
   const prev = uni.getStorageSync(STATS_KEY) || { rounds: 0, totalScore: 0 }
+  // 修复前 dingniuzi_stats 混含联网局：从历史里数出联网局数/积分并剔除，得到纯单机口径
   const stats = {
-    rounds: prev.rounds + netEntries.length,
-    totalScore: prev.totalScore + netEntries.reduce((s, h) => s + (h.scores?.[0] || 0), 0),
+    rounds: Math.max(0, prev.rounds - netEntries.length),
+    totalScore: prev.totalScore - netEntries.reduce((s, h) => s + (h.scores?.[0] || 0), 0),
   }
   uni.setStorageSync(STATS_KEY, stats)
   uni.setStorageSync(BACKFILL_KEY, true)
