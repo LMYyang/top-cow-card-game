@@ -282,7 +282,7 @@ describe('useNetGame', () => {
 })
 
 describe('useNetGame redeal', () => {
-  it('redeal() 转发 game.redeal 请求；失败 toast 服务器原因', async () => {
+  it('redeal() 转发 game.redeal 请求；失败回执带服务器原因（提示收敛到页面层）', async () => {
     const net = fakeNet()
     net.request = async (type, payload) => {
       net.sent.push({ type, payload })
@@ -293,7 +293,8 @@ describe('useNetGame redeal', () => {
     const res = await redeal()
     expect(res.ok).toBe(false)
     expect(net.sent.some((m) => m.type === 'game.redeal')).toBe(true)
-    expect(uni.showToast).toHaveBeenCalledWith(expect.objectContaining({ title: '手牌不满足重新发牌条件' }))
+    expect(res.reason).toBe('手牌不满足重新发牌条件')
+    expect(uni.showToast).not.toHaveBeenCalled() // a8716d3 起错误提示交页面层（game.vue onRedeal），composable 不再 toast
   })
 
   it('canRedealNow：PLAYING + 无出牌 + 满足牌型 + 未申请过 = true', () => {
