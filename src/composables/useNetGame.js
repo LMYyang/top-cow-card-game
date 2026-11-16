@@ -137,7 +137,7 @@ export function useNetGame(net = sharedNet()) {
   /** 申请重新发牌（联网）：服务器校验后广播 game.redealt 与新 game.state */
   async function redeal() {
     const res = await call('game.redeal', {})
-    if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    // 错误提示交页面层，与 myPlay/myDiscard 一致
     return res
   }
 
