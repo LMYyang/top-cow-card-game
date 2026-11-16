@@ -19,6 +19,10 @@
     {
       "path": "pages/roomlist/roomlist",
       "style": { "navigationBarTitleText": "顶牛子", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/settings/settings",
+      "style": { "navigationBarTitleText": "顶牛子", "navigationStyle": "custom" }
     }
   ],
   "globalStyle": {

@@ -12,6 +12,7 @@
     <view class="menu-buttons">
       <button class="btn-primary" @click="startGame">开始游戏</button>
       <button class="btn-secondary" @click="startOnline">联网对战</button>
+      <button class="btn-secondary" @click="openSettings">游戏设置</button>
       <view class="stats-card">
         <view class="stats-cols">
           <view class="stats-block" @click="openHistory('solo')">
@@ -169,6 +170,10 @@ function startGame() {
 
 function startOnline() {
   uni.navigateTo({ url: '/pages/lobby/lobby' })
+}
+
+function openSettings() {
+  uni.navigateTo({ url: '/pages/settings/settings' })
 }
 </script>
 

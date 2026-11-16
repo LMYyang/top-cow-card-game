@@ -42,6 +42,8 @@
       </view>
     </view>
     <view class="actions">
+      <!-- 对局设置：房主可改（net 设置页），非房主只读查看；显示当前算账摘要 -->
+      <button class="btn-secondary" @click="openSettings">对局设置：{{ settingsSummary }}</button>
       <button v-if="isHost" class="btn-primary start-btn" :disabled="!canStart" @click="start">{{ startHint }}</button>
       <button v-if="myMember && !isHost && !myMember.ready && !roomSettling" class="btn-secondary" @click="setReady(true)">准备</button>
       <button v-else-if="myMember && !isHost && (myMember.ready || roomSettling)" class="btn-secondary" @click="setReady(false)">取消准备</button>
@@ -132,6 +134,18 @@ const startHint = computed(() => {
 // 连续局收尾时全员 ready 已是 true（上一局收尾置位），settleAck 才是本次点击事实
 const seatReadyText = (m) =>
   m.isAI ? '' : roomSettling.value && !m.settled ? '结算中' : m.ready ? '已准备' : '未准备'
+
+// 对局设置摘要：未启用算账显示「不玩算账」，否则列出勾选的账种
+const settingsSummary = computed(() => {
+  const s = room.value?.settings
+  if (!s || !s.enabled) return '不玩算账'
+  const on = [s.red && '红', s.yao && '幺', s.erSan && '三二', s.wu && '五'].filter(Boolean)
+  return `算账：${on.join('/') || '无账种'}`
+})
+
+function openSettings() {
+  uni.navigateTo({ url: `/pages/settings/settings?mode=net&host=${isHost.value ? 1 : 0}` })
+}
 
 async function tapSeat(seat) {
   if (!room.value || mySeat.value === null) return // reconnect 快照未到时无从判断自己座位
