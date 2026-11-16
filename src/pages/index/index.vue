@@ -71,6 +71,9 @@
                 <text class="d-score" :class="{ negative: h.scores[seat] < 0 }">
                   {{ h.scores[seat] > 0 ? '+' : '' }}{{ h.scores[seat] }}
                 </text>
+                <text v-if="h.account && h.account.seat === seat" class="d-account" :class="{ fail: !h.account.success }">
+                  {{ h.account.type }}{{ h.account.success ? ' ✓' : ' ✗包庄' }}
+                </text>
                 <text v-if="historyMode !== 'net'" class="d-total">累计 {{ h.totalsAfter[seat] || 0 }}</text>
               </view>
             </view>
@@ -263,6 +266,8 @@ function openSettings() {
 .d-name { font-size: 22rpx; color: #f5f0e1; width: 64rpx; }
 .d-role { font-size: 22rpx; color: #b0a685; width: 80rpx; }
 .d-points { font-size: 22rpx; color: #b0a685; flex: 1; }
+.d-account { font-size: 22rpx; color: #c9a227; width: 110rpx; text-align: right; }
+.d-account.fail { color: #a04030; }
 .d-score { font-size: 24rpx; font-weight: bold; color: #c9a227; width: 64rpx; text-align: right; }
 .d-score.negative { color: #a04030; }
 .d-total { font-size: 22rpx; color: #b0a685; width: 96rpx; text-align: right; }

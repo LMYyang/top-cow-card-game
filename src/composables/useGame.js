@@ -201,6 +201,7 @@ export function useGame() {
           scores: view.result.scores, // { seat: number }
           roles: Object.fromEntries(view.result.ranks.map((r) => [r.seat, r.role])),
           points: Object.fromEntries(view.result.ranks.map((r) => [r.seat, r.points])), // 扣点
+          account: view.result.account || null, // { seat, type, success } | null
           totalsAfter,
         }
         appendHistory(entry)

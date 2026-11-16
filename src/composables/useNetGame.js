@@ -60,6 +60,7 @@ export function useNetGame(net = sharedNet()) {
       scores: result.scores,
       roles: Object.fromEntries((result.ranks || []).map((r) => [r.seat, r.role])),
       points: Object.fromEntries((result.ranks || []).map((r) => [r.seat, r.points])),
+      account: result.account || null,
       names: { ...names }, // 座位→昵称快照（联网对手是真人，昵称有展示价值）
     }
     appendHistory(entry)
