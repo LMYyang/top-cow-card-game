@@ -497,15 +497,18 @@ watch(
     splashTimer2 = setTimeout(() => { accountSplashShow.value = false }, 1800) // 1.8s 后整体消散
   }
 )
-onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2) })
+onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2); clearTimeout(splashTimer3) })
 
 // 牌桌震动：特效拍桌瞬间（slammed 翻转）触发 0.3s 抖动，先复位 class 再下一帧挂上，保证重复触发
 const tableShake = ref(false)
+let splashTimer3 = null
 watch(accountSlammed, (v) => {
   if (!v) return
   tableShake.value = false
-  requestAnimationFrame(() => { tableShake.value = true })
-  setTimeout(() => { tableShake.value = false }, 400)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => { tableShake.value = true })
+  })
+  splashTimer3 = setTimeout(() => { tableShake.value = false }, 400)
 })
 
 // ---------- 飞牌动画 ----------
