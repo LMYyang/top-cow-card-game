@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { createGame, rollDice, play, discard, viewOf, redeal as coreRedeal } from '../src/core/game.js'
 import { aiChoosePlay, aiChooseDiscard } from '../src/core/ai.js'
 import { canRedeal } from '../src/core/rules.js'
+import { DEFAULT_SETTINGS, normalizeSettings } from '../src/core/settings.js'
 
 const GRACE_MS = 60_000 // 对局中断线宽限：超时未重连则踢出（连续局重连窗口依赖它）
 const ROOM_IDLE_MS = 5 * 60_000 // WAITING 房无任何活动（无成员进出/无状态变更）多久后销毁
@@ -45,6 +46,7 @@ export class RoomManager {
       roomId: room.roomId,
       state: this.roomStateOf(room),
       settling: this.isSettling(room), // 结算收尾未完成：客户端禁用开局按钮并提示等待
+      settings: { ...room.settings },
       members: room.members.map((m) => ({
         seat: m.seat, name: m.name, connected: m.connected, gone: m.gone,
         ready: m.ready, isHost: m.isHost, isAI: m.isAI, token: m.token,
@@ -159,7 +161,7 @@ export class RoomManager {
     if (rejoined) return rejoined
     // lastWinnerSeat/lastWinnerToken：上局赢家（连续局掷骰者），随 finishSettle 写入；新局无记录
     const roomId = this.newRoomId()
-    const room = { roomId, members: [], game: null, settleAck: new Set(), createdAt: this.now(), lastActiveAt: this.now(), lastWinnerSeat: undefined, lastWinnerToken: undefined }
+    const room = { roomId, members: [], game: null, settleAck: new Set(), createdAt: this.now(), lastActiveAt: this.now(), lastWinnerSeat: undefined, lastWinnerToken: undefined, settings: { ...DEFAULT_SETTINGS } }
     this.rooms.set(roomId, room)
     return this.joinRoom(conn, name, roomId)
   }
@@ -285,6 +287,20 @@ export class RoomManager {
     return { ok: true }
   }
 
+  /** 房主修改算账设置（仅 WAITING 阶段），成功后随 room.state 广播 */
+  setRoomSettings(token, roomId, raw) {
+    const room = this.rooms.get(roomId)
+    if (!room) return { error: { code: 'ROOM_GONE', message: '房间不存在' } }
+    if (this.roomStateOf(room) !== 'WAITING') return { error: { code: 'ROOM_STARTED', message: '对局中不能修改设置' } }
+    const me = this.memberByToken(room, token)
+    if (!me) return { error: { code: 'NOT_IN_ROOM', message: '不在此房间' } }
+    if (!me.isHost) return { error: { code: 'NOT_HOST', message: '只有房主能修改设置' } }
+    room.settings = normalizeSettings(raw)
+    room.lastActiveAt = this.now()
+    this.pushRoomState(room)
+    return { ok: true }
+  }
+
   // ---------- 对局 ----------
 
   canStart(room) {
@@ -330,7 +346,7 @@ export class RoomManager {
 
   /** 开一局（startGame 触发）。rollerSeat：本局掷骰者座位 */
   beginRound(room, rollerSeat) {
-    room.game = createGame(Math.random, rollerSeat)
+    room.game = createGame(Math.random, rollerSeat, room.settings)
     room.settleAck = new Set()
     room.timers = new Set() // 本局编排定时器（掷骰/托管），destroyRoom 时统一清理
     room.diceInFlight = false
@@ -392,7 +408,7 @@ export class RoomManager {
       if (g.currentSeat !== me.seat) return { error: { code: 'NOT_YOUR_TURN', message: '没轮到你' } }
       if (me.aiTimer) return { error: { code: 'NOT_YOUR_TURN', message: '托管中' } }
       const tileIds = Array.isArray(payload?.tileIds) ? payload.tileIds : []
-      const res = play(g, me.seat, tileIds, payload.side === 'top' ? 'top' : 'bottom')
+      const res = play(g, me.seat, tileIds, payload.side === 'top' ? 'top' : 'bottom', !!payload.declare)
       if (!res.ok) return { error: { code: 'ILLEGAL', message: res.reason } }
       this.afterAction(room)
       return { ok: true }

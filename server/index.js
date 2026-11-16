@@ -174,6 +174,14 @@ function handle(mgr, conn, msg) {
       conn.token = null
       return
     }
+    case 'room.setSettings': {
+      // 房主修改算账设置（仅 WAITING 阶段）：房间由 token 反查，随 room.state 广播
+      const room = mgr.roomOf(conn.token)
+      if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
+      const res = mgr.setRoomSettings(conn.token, room.roomId, payload.settings)
+      if (res.error) return replyError(res.error.code, res.error.message)
+      return reply('room.setSettings.ok', {})
+    }
     case 'game.start': {
       const room = mgr.roomOf(conn.token)
       const res = mgr.startGame(conn.token, room ? room.roomId : NaN)

@@ -889,3 +889,38 @@ describe('game.redeal 申请重新发牌', () => {
     vi.useRealTimers()
   })
 })
+
+describe('房间算账设置', () => {
+  it('房主 WAITING 阶段可改设置并随 room.state 广播', () => {
+    const c1 = conn('甲')
+    const { room, token } = mgr.createRoom(c1, '甲')
+    c1.sent.length = 0
+    const res = mgr.setRoomSettings(token, room.roomId, { enabled: true, red: true, yao: false, erSan: true, wu: true })
+    expect(res.error).toBeUndefined()
+    expect(room.settings.enabled).toBe(true)
+    expect(room.settings.yao).toBe(false)
+    expect(c1.sent.some(m => m.type === 'room.state' && m.payload.room.settings?.enabled === true)).toBe(true)
+  })
+
+  it('非房主改设置被拒', () => {
+    const { room, token: t1 } = mgr.createRoom(conn('甲'), '甲')
+    const { token: t2 } = mgr.joinRoom(conn('乙'), '乙', room.roomId)
+    const res = mgr.setRoomSettings(t2, room.roomId, { enabled: true })
+    expect(res.error).toMatchObject({ code: 'NOT_HOST' })
+    void t1
+  })
+
+  it('对局中改设置被拒', () => {
+    const { room, token } = mgr.createRoom(conn('甲'), '甲')
+    mgr.startGame(token, room.roomId)
+    const res = mgr.setRoomSettings(token, room.roomId, { enabled: true })
+    expect(res.error).toMatchObject({ code: 'ROOM_STARTED' })
+  })
+
+  it('beginRound 注入房间设置', () => {
+    const { room, token } = mgr.createRoom(conn('甲'), '甲')
+    mgr.setRoomSettings(token, room.roomId, { enabled: true, red: true, yao: true, erSan: true, wu: true })
+    mgr.startGame(token, room.roomId)
+    expect(room.game.settings.enabled).toBe(true)
+  })
+})
