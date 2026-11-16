@@ -13,10 +13,20 @@
     <view v-if="mustDiscard" class="hint warn">无牌可接，请选一张扣下</view>
     <view class="hand">
       <view v-for="t in hand" :key="t.id" class="tile-wrap">
-        <!-- 双端都可接时：两个小端按钮悬浮在选中牌的正上方，点任一端直接出牌 -->
-        <view v-if="bothEnds && t.id === selectedId" class="side-float">
-          <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'top' })">上端</button>
-          <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'bottom' })">下端</button>
+        <!-- 选中牌的悬浮按钮：可宣告时显示「算X账/不算账」，否则两端皆可接时显示「上端/下端」 -->
+        <view v-if="t.id === selectedId && myTurn && !mustDiscard && (declarations.length || bothEnds)" class="side-float">
+          <template v-if="declarations.length">
+            <button
+              v-for="d in declarations" :key="d.type"
+              class="btn-side btn-declare"
+              @click="$emit('declare', { id: t.id, side: d.side, type: d.type })"
+            >算{{ d.type.replace('账', '') }}账</button>
+            <button class="btn-side" @click="$emit('no-declare', { id: t.id })">不算账</button>
+          </template>
+          <template v-else>
+            <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'top' })">上端</button>
+            <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'bottom' })">下端</button>
+          </template>
         </view>
         <PlayingTile
           :tile="t"
@@ -66,8 +76,9 @@ const props = defineProps({
   openEnds: { type: Object, default: null }, // 链两端待接点 { top, bottom }，首出前 null
   revealKept: { type: Boolean, default: false }, // 局末亮牌：翻开我扣的牌面
   isLeader: { type: Boolean, default: false }, // 我是头牌（与各家 OpponentZone 的 👑 标记一致）
+  declarations: { type: Array, default: () => [] }, // [{ type, side }] 选中牌的可宣告项
 })
-const emit = defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick'])
+const emit = defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick', 'declare', 'no-declare'])
 
 /** 双击快速出牌：仅当该牌无需选端（唯一可接端 / 链两端同点 / 首出）时生效，需选端时仍走"选中→选端→出牌"流程 */
 let lastTapId = null
@@ -78,7 +89,7 @@ function onTileTap(id) {
   lastTapId = id
   lastTapTime = now
   emit('select', id)
-  if (isDoubleTap && props.myTurn && !props.mustDiscard && !bothEnds.value) {
+  if (isDoubleTap && props.myTurn && !props.mustDiscard && !bothEnds.value && !props.declarations.length) {
     emit('confirm-play')
   }
 }
@@ -137,4 +148,5 @@ defineExpose({ bothEnds })
   box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.45);
 }
 .btn-side.active { background: #c9a227; color: #fff; border-color: #c9a227; }
+.btn-declare { background: #a04030; border-color: #c9a227; color: #f5f0e1; }
 </style>

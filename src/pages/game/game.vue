@@ -1,6 +1,6 @@
 <!-- src/pages/game/game.vue -->
 <template>
-  <view class="table" :class="{ revealing: fx.revealKept }" @click="onRevealTap">
+  <view class="table" :class="{ revealing: fx.revealKept, shake: tableShake }" @click="onRevealTap">
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
@@ -65,9 +65,12 @@
         :open-ends="view.openEnds"
         :reveal-kept="fx.revealKept"
         :is-leader="view.leaderSeat === mySeatVal"
+        :declarations="myDeclarations"
         @select="selectedId = $event"
         @choose-side="mySide = $event"
         @side-pick="onSidePick"
+        @declare="onDeclare"
+        @no-declare="onNoDeclare"
         @confirm-play="onConfirmPlay"
         @confirm-discard="onConfirmDiscard"
       >
@@ -81,6 +84,15 @@
          竖牌按该次放置的 mirrored 渲染（飞行时上下朝向即最终落地朝向），横牌无上下语义不镜像 -->
     <view v-if="fly.tile" class="fly-layer" :style="flyStyle">
       <PlayingTile :tile="fly.tile" size="sm" :horizontal="fly.tile.type === '横牌'" :mirrored="fly.mirrored" />
+    </view>
+
+    <!-- 算账宣告特效：大字由大到小飞入拍桌，落定震动+闪光后消散；不挡操作 -->
+    <view v-if="accountSplashShow" class="account-splash-layer">
+      <view class="account-splash" :class="{ slammed: accountSlammed }">
+        <text class="splash-text">算账</text>
+        <text class="splash-sub">{{ accountSplashSub }}</text>
+      </view>
+      <view v-if="accountSlammed" class="splash-flash" />
     </view>
 
     <!-- 结算覆盖层 -->
@@ -100,6 +112,7 @@
             <text>{{ labelOf(r.seat) }}{{ r.seat === view.result.winner ? ' 🏆' : '' }}</text>
           </view>
           <text>扣 {{ r.points }} 点 · {{ r.role }}</text>
+          <text v-if="accountTag(r.seat)" class="account-tag" :class="{ fail: !view.result.account.success }">{{ accountTag(r.seat) }}</text>
           <text class="score">{{ view.result.scores[r.seat] > 0 ? '+' : '' }}{{ view.result.scores[r.seat] }}</text>
         </view>
         <view class="settle-actions">
@@ -132,7 +145,7 @@ import HandArea from '../../components/HandArea.vue'
 import TableTimeline from '../../components/TableTimeline.vue'
 import PlayingTile from '../../components/PlayingTile.vue'
 import PlayerAvatar from '../../components/PlayerAvatar.vue'
-import { placeSides, diceToSeatOffset } from '../../core/rules.js'
+import { placeSides, diceToSeatOffset, declarationFor } from '../../core/rules.js'
 import { useGame } from '../../composables/useGame.js'
 import { useNetGame } from '../../composables/useNetGame.js'
 import { sharedNet } from '../../utils/net.js'
@@ -352,6 +365,13 @@ const iAmWinner = computed(() =>
   view.value.result && view.value.result.winner === mySeatVal.value
 )
 
+/** 结算卡账目标签：宣告者的行显示「红账 ✓×2」或「红账 ✗包庄」，无宣告/非宣告者行返回 '' */
+function accountTag(seat) {
+  const a = view.value.result?.account
+  if (!a || a.seat !== seat) return ''
+  return `${a.type}${a.success ? ' ✓×2' : ' ✗包庄'}`
+}
+
 /** 彩带粒子样式：按序号确定性散布（位置/延时/时长/初始角度），每次弹出结算重挂 v-for 自动重放 */
 function confettiStyle(n) {
   const left = (n * 5.5) % 100 // 横向铺开
@@ -411,6 +431,82 @@ function onConfirmDiscard() {
   if (!selectedId.value) return
   myDiscard(selectedId.value)
 }
+
+// ---------- 算账宣告 ----------
+/** 选中牌的可宣告项（[{ type, side }]）：仅轮到我、链已开出且选中手牌时计算 */
+const myDeclarations = computed(() => {
+  if (!myTurn.value || view.value.openEnds === null || !selectedId.value) return []
+  const t = view.value.myHand.find((x) => x.id === selectedId.value)
+  if (!t) return []
+  const chainTiles = (view.value.tableHistory || []).flatMap((e) => e.tiles || [])
+  return declarationFor(t, view.value.openEnds, chainTiles, view.value.myHand, view.value.settings || null)
+})
+
+/** 宣告出牌：按宣告端出牌并 declare=true */
+async function onDeclare({ id, side }) {
+  const res = await gameApi.value?.myPlay(id, side, true)
+  if (res?.ok) {
+    selectedId.value = null
+    mySide.value = 'bottom'
+  } else {
+    uni.showToast({ title: res?.reason || '宣告失败', icon: 'none' })
+  }
+}
+
+/** 不算账：红/幺/五账 = 接另一端照常出；三二账 = 收回重选 */
+async function onNoDeclare({ id }) {
+  const t = view.value.myHand.find((x) => x.id === id)
+  if (!t) return
+  const decl = myDeclarations.value
+  if (decl.length && decl[0].type === '三二账') {
+    selectedId.value = null // 收回重选
+    uni.showToast({ title: '已收回，请选择其他牌', icon: 'none' })
+    return
+  }
+  // 接另一端（declarations 只含封账端，另一端 = placeSides 里非宣告侧）
+  const options = placeSides(t, view.value.openEnds)
+  const declSides = new Set(decl.map((d) => d.side))
+  const normal = options.find((o) => !declSides.has(o.side))
+  const side = normal ? normal.side : options[0]?.side || 'bottom'
+  const res = await gameApi.value?.myPlay(id, side)
+  if (res?.ok) { selectedId.value = null; mySide.value = 'bottom' }
+  else uni.showToast({ title: res?.reason || '出牌失败', icon: 'none' })
+}
+
+// ---------- 算账宣告特效 ----------
+const accountSplashShow = ref(false)
+const accountSlammed = ref(false)
+let splashTimer1 = null
+let splashTimer2 = null
+const accountSplashSub = computed(() => {
+  const a = fx.value.accountSplash
+  if (!a) return ''
+  const rel = (a.seat - mySeatVal.value + 4) % 4
+  const NAMES = ['我', '下家', '对家', '上家']
+  return `${a.type} · ${NAMES[rel]}`
+})
+watch(
+  () => fx.value.accountSplash,
+  (a) => {
+    if (!a) return
+    accountSplashShow.value = true
+    accountSlammed.value = false
+    clearTimeout(splashTimer1)
+    clearTimeout(splashTimer2)
+    splashTimer1 = setTimeout(() => { accountSlammed.value = true }, 450) // 飞入 0.45s 后拍桌
+    splashTimer2 = setTimeout(() => { accountSplashShow.value = false }, 1800) // 1.8s 后整体消散
+  }
+)
+onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2) })
+
+// 牌桌震动：特效拍桌瞬间（slammed 翻转）触发 0.3s 抖动，先复位 class 再下一帧挂上，保证重复触发
+const tableShake = ref(false)
+watch(accountSlammed, (v) => {
+  if (!v) return
+  tableShake.value = false
+  requestAnimationFrame(() => { tableShake.value = true })
+  setTimeout(() => { tableShake.value = false }, 400)
+})
 
 // ---------- 飞牌动画 ----------
 // 出牌入桌太快看不清来路：监听 tableHistory 新条目，让一张牌的克隆从出牌方头像位置
@@ -849,4 +945,37 @@ function confirmGoHome() {
 .timeline-wrap { display: flex; justify-content: center; width: 100%; }
 /* 定位锚点包裹层：不改变内部布局（display: contents），仅提供 getElementById 锚点 */
 #opp-top-anchor, #opp-left-anchor, #opp-right-anchor, #hand-anchor { display: contents; }
+
+/* 结算卡账目标签：宣告者行显示账种与结果（成功金色 ×2 / 失败红色包庄） */
+.account-tag { font-size: 22rpx; color: #c9a227; }
+.account-tag.fail { color: #a04030; }
+
+/* 算账拍桌特效层：fixed 全屏，pointer-events 穿透 */
+.account-splash-layer { position: fixed; inset: 0; z-index: 95; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+.account-splash { display: flex; flex-direction: column; align-items: center; animation: splash-fly 0.45s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
+.account-splash.slammed { animation: splash-slam 0.18s ease-out both; }
+.splash-text { font-size: 200rpx; font-weight: 900; color: #c9a227; text-shadow: 0 0 40rpx rgba(201, 162, 39, 0.9), 0 12rpx 24rpx rgba(0, 0, 0, 0.6); letter-spacing: 24rpx; }
+.splash-sub { margin-top: 12rpx; font-size: 30rpx; color: #f5f0e1; background: rgba(58, 44, 20, 0.85); padding: 8rpx 28rpx; border-radius: 999rpx; }
+@keyframes splash-fly {
+  0% { transform: scale(8); opacity: 0; }
+  60% { transform: scale(1.6); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes splash-slam {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.88); }
+  100% { transform: scale(1); }
+}
+/* 拍桌瞬间金色冲击闪光 */
+.splash-flash { position: absolute; inset: 0; background: radial-gradient(circle, rgba(201, 162, 39, 0.35), transparent 70%); animation: flash-out 0.5s ease-out both; }
+@keyframes flash-out { 0% { opacity: 1; } 100% { opacity: 0; } }
+/* 拍桌瞬间牌桌震动（挂 .table 上，与 revealing 组合共存） */
+.table.shake { animation: table-shake 0.3s ease-out; }
+@keyframes table-shake {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-8rpx, 4rpx); }
+  50% { transform: translate(6rpx, -4rpx); }
+  75% { transform: translate(-4rpx, 2rpx); }
+}
+
 </style>
