@@ -144,7 +144,11 @@ const settingsSummary = computed(() => {
 })
 
 function openSettings() {
-  uni.navigateTo({ url: `/pages/settings/settings?mode=net&host=${isHost.value ? 1 : 0}` })
+  // net.on 无回放机制，room.state 只在变化时推送：当前 settings 随 query 带给设置页作初值，
+  // 否则房主进设置页时 draft 停在 DEFAULT_SETTINGS，直接保存会覆盖写错
+  const s = room.value?.settings || {}
+  const q = `mode=net&host=${isHost.value ? 1 : 0}&s=${encodeURIComponent(JSON.stringify(s))}`
+  uni.navigateTo({ url: `/pages/settings/settings?${q}` })
 }
 
 async function tapSeat(seat) {

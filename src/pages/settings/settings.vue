@@ -47,15 +47,20 @@ const isNet = ref(false)
 const readonly = ref(false) // 联网非房主：只读（room.vue 跳转时 host=1/0 决定）
 const draft = reactive({ ...DEFAULT_SETTINGS })
 let offRoomState = null
+let dirty = false // 用户是否已动过 draft（动过后不再用 room.state 推送覆盖未保存的编辑）
 
 onLoad((query) => {
   isNet.value = query.mode === 'net'
   if (isNet.value) {
     readonly.value = query.host !== '1'
+    // 初值：room.vue 跳转时随 query 携带（net.on 无回放，room.state 只在变化时推送）
+    if (query.s) {
+      try { Object.assign(draft, normalizeSettings(JSON.parse(decodeURIComponent(query.s)))) } catch { /* 忽略坏参 */ }
+    }
     // 房间设置以服务器 room.state 推送为准：room.vue 改动后推送同步到本页 draft
     const net = sharedNet()
     offRoomState = net.on('room.state', ({ room }) => {
-      if (room) Object.assign(draft, normalizeSettings(room.settings))
+      if (room && !dirty) Object.assign(draft, normalizeSettings(room.settings))
     })
   } else {
     Object.assign(draft, normalizeSettings(uni.getStorageSync('dingniuzi_settings')))
@@ -65,6 +70,7 @@ onUnmounted(() => offRoomState?.())
 
 function toggleEnabled() {
   if (readonly.value) return
+  dirty = true
   draft.enabled = !draft.enabled
   if (draft.enabled) {
     // 首次打开默认四项全选（关闭再打开保留用户上次的账种勾选）
@@ -75,6 +81,7 @@ function toggleEnabled() {
 }
 function toggleAcc(key) {
   if (readonly.value) return
+  dirty = true
   draft[key] = !draft[key]
 }
 
