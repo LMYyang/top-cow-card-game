@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { createGame, rollDice, play, discard, viewOf, leadLegalTileIds, redeal } from '../src/core/game.js'
 import { mulberry32 } from '../src/core/deck.js'
+import { settle } from '../src/core/rules.js'
+import { TILES } from '../src/core/tiles.js'
 import { tile } from './helpers.js'
+
+const byId = (id) => TILES.find(t => t.id === id)
 
 function startGame(seed = 42, dice = 3) {
   const g = createGame(mulberry32(seed))
@@ -366,5 +370,123 @@ describe('redeal 申请重新发牌', () => {
     expect(redeal(g, 1).ok).toBe(true)
     const v = viewOf(g, 0)
     expect(v.redealUsed).toEqual([1])
+  })
+})
+
+const ACC_ON = { enabled: true, red: true, yao: true, erSan: true, wu: true }
+
+/** 构造红账宣告场景：强制 g.players 手牌（dice=3 → 头牌 seat2） */
+function setupRedAccount(seed = 42) {
+  const g = createGame(mulberry32(seed), 0, ACC_ON)
+  rollDice(g, 3) // 头牌 = seat 2
+  // 头牌 seat2 手牌：先出一张牌建链。给 seat2 与 seat1 布置红账场景：
+  // seat2（头牌）出红十 t4-1 建链（两端 4,6）；seat1 持另一张红十 t4-2 + 一张能接的过渡牌
+  g.players[2].hand = [byId('t4-1'), byId('t1-1'), byId('t3-1'), byId('t5-1'), byId('t6-1'), byId('t10-1')]
+  g.players[1].hand = [byId('t4-2'), byId('t2-1'), byId('t11-1'), byId('t12-1'), byId('t13-1'), byId('t8-1')]
+  const lead = play(g, 2, ['t4-1'])
+  expect(lead.ok).toBe(true) // 红十首出（其余各家持 4/6 端牌，不拉三家成立——测试内断言防御）
+  return { g }
+}
+
+describe('play declare 算账宣告', () => {
+  it('declare=true 且构成宣告：account 记录座位与账种', () => {
+    const { g } = setupRedAccount()
+    // 首出后 openEnds={top:6,bottom:4}。红十 4/6 接 top(6) 端非镜像 → 新 top = tile.b = 4
+    // → 端 4,4 冻结（两张红十全上链）→ 红账
+    g.currentSeat = 1
+    const res2 = play(g, 1, ['t4-2'], 'top', true)
+    expect(res2.ok).toBe(true)
+    expect(g.account).toEqual({ seat: 1, type: '红账' })
+  })
+  it('declare=false 同样的牌只是普通出牌，不记 account', () => {
+    const { g } = setupRedAccount()
+    g.currentSeat = 1
+    const res = play(g, 1, ['t4-2'], 'top')
+    expect(res.ok).toBe(true)
+    expect(g.account).toBe(null)
+  })
+  it('declare=true 但不构成宣告被拒', () => {
+    const { g } = setupRedAccount()
+    g.currentSeat = 1
+    const res = play(g, 1, ['t4-2'], 'bottom', true) // 接 4 端暴露 6，非冻结，不构成宣告
+    expect(res.ok).toBe(false)
+    expect(g.account).toBe(null)
+    expect(g.players[1].hand.some(t => t.id === 't4-2')).toBe(true) // 牌仍在手
+  })
+  it('settings 关闭时 declare 被拒', () => {
+    const g = createGame(mulberry32(42), 0, { ...ACC_ON, enabled: false })
+    rollDice(g, 3)
+    g.players[2].hand = [byId('t4-1'), byId('t1-1'), byId('t3-1'), byId('t5-1'), byId('t6-1'), byId('t10-1')]
+    g.players[1].hand = [byId('t4-2'), byId('t2-1'), byId('t11-1'), byId('t12-1'), byId('t13-1'), byId('t8-1')]
+    expect(play(g, 2, ['t4-1']).ok).toBe(true)
+    g.currentSeat = 1
+    expect(play(g, 1, ['t4-2'], 'top', true).ok).toBe(false)
+  })
+  it('已有人宣告后再宣告被拒', () => {
+    const { g } = setupRedAccount()
+    g.currentSeat = 1
+    expect(play(g, 1, ['t4-2'], 'top', true).ok).toBe(true)
+    // 宣告后链冻结为 4,4：给 seat1 换上红八 t5-1（4/4 可接 4 端），再次 declare 应被
+    // 「本局已有人宣告算账」拒绝（红八本身也非竖牌触发牌，双保险）
+    g.currentSeat = 1
+    g.players[1].hand = [byId('t5-1'), byId('t5-2')]
+    const res2 = play(g, 1, ['t5-1'], 'bottom', true)
+    expect(res2.ok).toBe(false)
+  })
+})
+
+describe('settle 算账结算', () => {
+  it('宣告者扣点严格最小：全体翻倍 +12/-6/-4/-2', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [byId('t11-1')] },               // 2 点 最小
+      { seat: 1, hand: [], kept: [byId('t11-1'), byId('t11-2')] },// 4 点
+      { seat: 2, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-1')] }, // 8 点
+      { seat: 3, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-2')] }, // 8 点
+    ]
+    const result = settle(players, 0, { seat: 0, type: '红账' })
+    // 输家按扣点降序排庄位：seat2/seat3 各 8 点 > seat1 4 点 → seat2=大庄、seat3=二庄、seat1=小庄
+    // 翻倍：赢家 +12、大庄 -6、二庄 -4、小庄 -2
+    expect(result.scores).toEqual({ 0: 12, 1: -2, 2: -6, 3: -4 })
+    expect(result.account).toEqual({ seat: 0, type: '红账', success: true })
+  })
+  it('宣告者与别人平点：算失败，包庄 -12', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [byId('t11-1')] }, // 2 点
+      { seat: 1, hand: [], kept: [byId('t11-1')] }, // 2 点 平点
+      { seat: 2, hand: [], kept: [byId('t11-1'), byId('t11-2')] },
+      { seat: 3, hand: [], kept: [] },
+    ]
+    const result = settle(players, 0, { seat: 0, type: '幺账' })
+    // seat3 扣 0 更小；无论如何宣告者非严格最小 → 失败
+    expect(result.account).toEqual({ seat: 0, type: '幺账', success: false })
+    expect(result.scores[0]).toBe(-12)
+    expect(result.winner).toBe(3)
+    expect(result.scores[3]).toBe(12)
+    expect(result.scores[1]).toBe(0)
+    expect(result.scores[2]).toBe(0)
+  })
+  it('宣告者非最小：失败包庄 -12 赢家 +12 其余 0', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [byId('t11-1'), byId('t11-2')] },        // 4 点 宣告者
+      { seat: 1, hand: [], kept: [byId('t11-1')] },                       // 2 点 赢家
+      { seat: 2, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-1')] }, // 8
+      { seat: 3, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-2')] }, // 8
+    ]
+    const result = settle(players, 0, { seat: 0, type: '三二账' })
+    expect(result.winner).toBe(1)
+    expect(result.scores).toEqual({ 0: -12, 1: 12, 2: 0, 3: 0 })
+    expect(result.account).toEqual({ seat: 0, type: '三二账', success: false })
+  })
+  it('无宣告（account=null）结算与旧版一致', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [byId('t11-1')] },
+      { seat: 1, hand: [], kept: [byId('t11-1'), byId('t11-2')] },
+      { seat: 2, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-1')] },
+      { seat: 3, hand: [], kept: [byId('t11-1'), byId('t11-2'), byId('t10-2')] },
+    ]
+    const result = settle(players, 0)
+    // 扣点 seat2/seat3(8) > seat1(4) → 大庄=seat2、二庄=seat3、小庄=seat1
+    expect(result.scores).toEqual({ 0: 6, 1: -1, 2: -3, 3: -2 })
+    expect(result.account).toBe(null)
   })
 })

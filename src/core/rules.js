@@ -92,10 +92,13 @@ export function seatName(offset) {
  * 结算。
  * @param players 四个 { seat, hand, kept }
  * @param leaderSeat 头牌座位
- * @returns {{ winner: number, ranks: [{seat, points, role}], scores: {seat: number} }}
+ * @param account 本局算账宣告 { seat, type }；无宣告传 null/缺省（行为与旧版一致）
+ * @returns {{ winner: number, ranks: [{seat, points, role}], scores: {seat: number}, account: {seat, type, success}|null }}
  * role: '赢家'|'大庄'|'二庄'|'小庄'
+ * 有宣告时：宣告者扣点严格小于其余三家最小扣点 → 成功（全体分数翻倍 12/-6/-4/-2）；
+ * 否则失败：宣告者包庄 -12，赢家 +12，另两输家 0。
  */
-export function settle(players, leaderSeat) {
+export function settle(players, leaderSeat, account = null) {
   const info = players.map((p) => ({
     seat: p.seat,
     points: p.kept.reduce((s, t) => s + tilePoints(t), 0),
@@ -125,18 +128,41 @@ export function settle(players, leaderSeat) {
   }
 
   const roles = ['赢家', '大庄', '二庄', '小庄']
-  const rankScores = [6, -3, -2, -1]
-
   const ranks = ordered.map((p, idx) => ({ ...p, role: roles[idx] }))
   const scores = {}
-  for (const r of ranks) {
-    scores[r.seat] = rankScores[roles.indexOf(r.role)]
+
+  if (account) {
+    // 成功 = 宣告者扣点严格小于其余三家的最小扣点（平点即失败）
+    const accInfo = info.find((i) => i.seat === account.seat)
+    const otherMin = Math.min(...info.filter((i) => i.seat !== account.seat).map((i) => i.points))
+    const success = !!accInfo && accInfo.points < otherMin
+    if (success) {
+      const rankScores = [12, -6, -4, -2] // 翻倍
+      for (const r of ranks) scores[r.seat] = rankScores[roles.indexOf(r.role)]
+    } else {
+      // 失败：宣告者包庄 -12，赢家 +12，另两输家 0（庄位排序照常，仅分数覆盖）
+      for (const r of ranks) {
+        if (r.seat === account.seat) scores[r.seat] = -12
+        else if (r.seat === winnerInfo.seat) scores[r.seat] = 12
+        else scores[r.seat] = 0
+      }
+    }
+    return {
+      winner: ordered[0].seat,
+      ranks,
+      scores,
+      account: { ...account, success },
+    }
   }
+
+  const rankScores = [6, -3, -2, -1]
+  for (const r of ranks) scores[r.seat] = rankScores[roles.indexOf(r.role)]
 
   return {
     winner: ordered[0].seat,
     ranks,
     scores,
+    account: null,
   }
 }
 

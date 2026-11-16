@@ -1,5 +1,6 @@
 import { dealGroups } from './deck.js'
-import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, nextOpenEnds, diceToSeatOffset, settle, canRedeal } from './rules.js'
+import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, nextOpenEnds, diceToSeatOffset, settle, canRedeal, declarationFor } from './rules.js'
+import { DEFAULT_SETTINGS, normalizeSettings } from './settings.js'
 
 /**
  * 游戏状态机（纯 JS、平台无关、可变状态对象）。
@@ -9,7 +10,7 @@ import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, nextOpenEn
  * 跟牌可接在任一端，由 play 的 side 参数（'bottom'|'top'）指定，缺省 'bottom'。
  */
 
-export function createGame(rng = Math.random, rollerSeat = 0) {
+export function createGame(rng = Math.random, rollerSeat = 0, settings = DEFAULT_SETTINGS) {
   return {
     rng,
     state: 'ROLLING',
@@ -23,6 +24,8 @@ export function createGame(rng = Math.random, rollerSeat = 0) {
     currentSeat: null,
     result: null,
     redealUsed: new Set(), // 本局已申请过重新发牌的座位（每人每局 1 次，防死循环）
+    settings: normalizeSettings(settings),
+    account: null, // { seat, type } 本局宣告（一局最多一次）
   }
 }
 
@@ -76,7 +79,7 @@ export function redeal(g, seat) {
 
 function advanceTurn(g) {
   if (g.players.every((p) => p.hand.length === 0)) {
-    g.result = settle(g.players, g.leaderSeat)
+    g.result = settle(g.players, g.leaderSeat, g.account)
     g.state = 'SETTLE'
     return
   }
@@ -92,8 +95,8 @@ export function leadLegalTileIds(g, seat) {
   return playableForLead(g.players[seat].hand, others).map((t) => t.id)
 }
 
-/** 出牌。tileIds: [id] 或 [id, id]（仅头牌首出双张红八）；跟牌时 side: 'bottom'|'top' 指定接哪端（缺省 bottom） */
-export function play(g, seat, tileIds, side = 'bottom') {
+/** 出牌。tileIds: [id] 或 [id, id]（仅头牌首出双张红八）；跟牌时 side: 'bottom'|'top' 指定接哪端（缺省 bottom）；declare=true 声明算账宣告（需复核通过） */
+export function play(g, seat, tileIds, side = 'bottom', declare = false) {
   if (g.state !== 'PLAYING') return { ok: false, reason: '非出牌阶段' }
   if (seat !== g.currentSeat) return { ok: false, reason: '没轮到该座位' }
   if (new Set(tileIds).size !== tileIds.length) return { ok: false, reason: '重复的牌' }
@@ -131,6 +134,20 @@ export function play(g, seat, tileIds, side = 'bottom') {
     placement = chosen
   }
 
+  // 算账宣告复核：仅单张跟牌可宣告；declare=true 时该端必须构成宣告
+  let declared = null
+  if (declare) {
+    if (g.openEnds === null || tiles.length !== 1) {
+      return { ok: false, reason: '只有跟牌可以宣告算账' }
+    }
+    if (g.account) return { ok: false, reason: '本局已有人宣告算账' }
+    const chainTiles = g.tableHistory.flatMap((e) => e.tiles || [])
+    const opts = declarationFor(tiles[0], g.openEnds, chainTiles, player.hand, g.settings)
+    const hit = opts.find((o) => o.side === placement.side)
+    if (!hit) return { ok: false, reason: '这手牌不构成算账宣告' }
+    declared = { seat, type: hit.type }
+  }
+
   const tile = tiles[tiles.length - 1]
   player.hand = player.hand.filter((t) => !tileIds.includes(t.id))
   g.tableTile = tile
@@ -142,6 +159,7 @@ export function play(g, seat, tileIds, side = 'bottom') {
     g.openEnds = nextOpenEnds(g.openEnds, tile, placement.side, placement.mirrored)
   }
 
+  if (declared) g.account = declared
   g.tableHistory.push({ seat, tiles, side: placement.side, mirrored: placement.mirrored })
   advanceTurn(g)
   return { ok: true }
@@ -184,5 +202,7 @@ export function viewOf(g, viewerSeat) {
     result: g.result,
     tableHistory: g.tableHistory,
     redealUsed: [...g.redealUsed],
+    account: g.account,
+    settings: { ...g.settings },
   }
 }
