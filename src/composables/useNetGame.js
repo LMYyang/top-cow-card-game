@@ -17,8 +17,9 @@ export function useNetGame(net = sharedNet()) {
     state: '', leaderSeat: null, rollerSeat: null, currentSeat: null,
     tableTile: null, openEnds: null, myHand: [], myKept: [],
     opponents: [], result: null, tableHistory: [], redealUsed: [],
+    account: null, settings: null,
   })
-  const fx = reactive({ dice: null, diceRolling: false, revealKept: false, settleShow: false, lastMove: null })
+  const fx = reactive({ dice: null, diceRolling: false, revealKept: false, settleShow: false, lastMove: null, accountSplash: null })
   const connection = net.status
   let stopWatch = null
   const roomId = ref(null)
@@ -32,6 +33,10 @@ export function useNetGame(net = sharedNet()) {
     if (rid !== undefined) roomId.value = rid
     if (yourSeat !== undefined) mySeat.value = yourSeat
     if (n) Object.assign(names, n)
+    // 宣告特效：account 首次出现（或值变化）时点亮；重连快照重放同一值不重播
+    if (v.account && (!fx.accountSplash || fx.accountSplash.seat !== v.account.seat || fx.accountSplash.type !== v.account.type)) {
+      fx.accountSplash = { seat: v.account.seat, type: v.account.type }
+    }
   })
   const offOver = net.on('game.over', ({ result, view: v, fx: f }) => {
     // 终局推送的 view 必须应用：gameAction 的 play 让终局牌进 tableHistory 后状态即翻 SETTLE，
@@ -113,9 +118,9 @@ export function useNetGame(net = sharedNet()) {
     if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
   }
 
-  async function myPlay(tileId, side = 'bottom') {
+  async function myPlay(tileId, side = 'bottom', declare = false) {
     if (!myTurn.value) return { ok: false, reason: '没轮到你' }
-    return call('game.play', { tileIds: [tileId], side })
+    return call('game.play', { tileIds: [tileId], side, declare: !!declare })
   }
 
   async function myDiscard(tileId) {
@@ -136,6 +141,13 @@ export function useNetGame(net = sharedNet()) {
     return res
   }
 
+  /** 修改房间算账设置（房主、WAITING 阶段），失败 toast */
+  async function setRoomSettings(settings) {
+    const res = await call('room.setSettings', { settings })
+    if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    return res
+  }
+
   /** 我是否可申请重新发牌：PLAYING、无人出牌、满足牌型、本局未申请过 */
   const canRedealNow = computed(
     () => view.state === 'PLAYING' &&
@@ -152,5 +164,5 @@ export function useNetGame(net = sharedNet()) {
   /** 掷骰权座位：以服务器 view.rollerSeat 为准；未开局时回退自己座位（单机语义为 0） */
   const diceRollerSeat = computed(() => view.rollerSeat ?? mySeat.value)
 
-  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, redeal, canRedealNow, leave, connection, roomId, mySeat, fetchSnapshot }
+  return { view, fx, myTurn, mustDiscard, playableIds, labelOf, diceRollerSeat, roll, myPlay, myDiscard, restart, redeal, setRoomSettings, canRedealNow, leave, connection, roomId, mySeat, fetchSnapshot }
 }
