@@ -121,20 +121,20 @@ defineExpose({ bothEnds })
 .actions .btn-primary, .actions .btn-secondary { padding: 18rpx 48rpx; }
 /* 每张手牌的包裹层：作为悬浮端按钮（side-float）的绝对定位基准 */
 .tile-wrap { position: relative; }
-/* 悬浮在选中牌正上方的两个端按钮：加大到易点的尺寸（约 72rpx 高的拇指按钮），
-   再向上偏移（约一张牌高），完全不遮牌面。按钮间距拉开，减少连点误触 */
+/* 悬浮在选中牌正上方的两个端按钮：小巧尺寸（手牌上方悬浮层，避免喧宾夺主），
+   向上偏移（约一张牌高），完全不遮牌面。按钮间距适当拉开，减少连点误触 */
 .side-float {
   position: absolute;
-  left: 50%; top: -128rpx;
+  left: 50%; top: -96rpx;
   transform: translateX(-50%);
-  display: flex; gap: 28rpx;
+  display: flex; gap: 16rpx;
   z-index: 2;
 }
 .btn-side {
-  font-size: 30rpx; font-weight: bold; padding: 22rpx 44rpx; margin: 0; line-height: 1.2;
-  min-width: 152rpx;
-  background: #3a2c14; color: #f5f0e1; border-radius: 14rpx; border: 3rpx solid #8a7040;
-  box-shadow: 0 6rpx 16rpx rgba(0, 0, 0, 0.45);
+  font-size: 22rpx; font-weight: bold; padding: 10rpx 22rpx; margin: 0; line-height: 1.2;
+  min-width: 88rpx;
+  background: #3a2c14; color: #f5f0e1; border-radius: 10rpx; border: 2rpx solid #8a7040;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.45);
 }
 .btn-side.active { background: #c9a227; color: #fff; border-color: #c9a227; }
 </style>
