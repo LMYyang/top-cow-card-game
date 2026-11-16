@@ -1,5 +1,5 @@
 import { dealGroups } from './deck.js'
-import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, diceToSeatOffset, settle, canRedeal } from './rules.js'
+import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, nextOpenEnds, diceToSeatOffset, settle, canRedeal } from './rules.js'
 
 /**
  * 游戏状态机（纯 JS、平台无关、可变状态对象）。
@@ -138,18 +138,8 @@ export function play(g, seat, tileIds, side = 'bottom') {
   if (g.openEnds === null) {
     // 首出：链两端 = 该牌两端（未镜像渲染：上端 b、下端 a）
     g.openEnds = { top: tile.b, bottom: tile.a }
-  } else if (placement.side === 'bottom') {
-    // 接在底端：新牌朝上端（mirrored ? a : b）与旧 bottom 对接，朝下端成为新 bottom
-    g.openEnds = {
-      top: g.openEnds.top,
-      bottom: placement.mirrored ? tile.b : tile.a,
-    }
   } else {
-    // 接在顶端：新牌朝下端（mirrored ? b : a）与旧 top 对接，朝上端成为新 top
-    g.openEnds = {
-      top: placement.mirrored ? tile.a : tile.b,
-      bottom: g.openEnds.bottom,
-    }
+    g.openEnds = nextOpenEnds(g.openEnds, tile, placement.side, placement.mirrored)
   }
 
   g.tableHistory.push({ seat, tiles, side: placement.side, mirrored: placement.mirrored })

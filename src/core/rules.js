@@ -54,6 +54,16 @@ export function placeSides(tile, openEnds) {
   return sides
 }
 
+/** 计算接牌后的新链两端：与 play 的落牌端点更新共用，防宣告复核与实际落牌漂移。
+ *  side='bottom'：新牌朝上端（mirrored ? a : b）与旧 bottom 对接，朝下端成为新 bottom；
+ *  side='top'：新牌朝下端（mirrored ? b : a）与旧 top 对接，朝上端成为新 top。 */
+export function nextOpenEnds(openEnds, tile, side, mirrored) {
+  if (side === 'bottom') {
+    return { top: openEnds.top, bottom: mirrored ? tile.b : tile.a }
+  }
+  return { top: mirrored ? tile.a : tile.b, bottom: openEnds.bottom }
+}
+
 /** 头牌首出可出的牌：不能"拉"三家——其余三家任一家持有该牌任一端点才可出 */
 export function playableForLead(hand, otherHands) {
   const otherEnds = new Set()
@@ -183,10 +193,8 @@ export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
   const afterChain = [...chainTiles, tile]
   const opts = []
   for (const { side, mirrored } of sides) {
-    // 复用 play 的新端计算：bottom 接后 bottom = mirrored ? tile.b : tile.a；top 对称
-    const newEnds = side === 'bottom'
-      ? { top: openEnds.top, bottom: mirrored ? tile.b : tile.a }
-      : { top: mirrored ? tile.a : tile.b, bottom: openEnds.bottom }
+    // 复用 play 的新端计算
+    const newEnds = nextOpenEnds(openEnds, tile, side, mirrored)
     const key = [newEnds.top, newEnds.bottom].sort((a, b) => a - b).join(',')
     const type = ACCOUNT_TYPES[key]
     if (!type) continue
