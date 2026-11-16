@@ -489,4 +489,17 @@ describe('settle 算账结算', () => {
     expect(result.scores).toEqual({ 0: 6, 1: -1, 2: -3, 3: -2 })
     expect(result.account).toBe(null)
   })
+  it('宣告者平点靠首出序成为赢家（allClean）：赢家 +12、大庄包庄 -12', () => {
+    const players = [
+      { seat: 0, hand: [], kept: [] }, // 宣告者=头牌，扣 0 点
+      { seat: 1, hand: [], kept: [] },
+      { seat: 2, hand: [], kept: [] },
+      { seat: 3, hand: [], kept: [] },
+    ]
+    const result = settle(players, 0, { seat: 0, type: '五账' })
+    // 四家净手：头牌(宣告者)赢 +12，大庄(头牌下家 seat1)包庄 -12，其余 0；零和保持
+    expect(result.winner).toBe(0)
+    expect(result.account).toEqual({ seat: 0, type: '五账', success: false })
+    expect(result.scores).toEqual({ 0: 12, 1: -12, 2: 0, 3: 0 })
+  })
 })

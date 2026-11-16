@@ -140,11 +140,18 @@ export function settle(players, leaderSeat, account = null) {
       const rankScores = [12, -6, -4, -2] // 翻倍
       for (const r of ranks) scores[r.seat] = rankScores[roles.indexOf(r.role)]
     } else {
-      // 失败：宣告者包庄 -12，赢家 +12，另两输家 0（庄位排序照常，仅分数覆盖）
-      for (const r of ranks) {
-        if (r.seat === account.seat) scores[r.seat] = -12
-        else if (r.seat === winnerInfo.seat) scores[r.seat] = 12
-        else scores[r.seat] = 0
+      // 失败：宣告者包庄 -12，赢家 +12，另两输家 0（庄位排序照常，仅分数覆盖）。
+      // 宣告者若平点靠首出序成为赢家：赢家分 +12 给庄位次位（大庄），宣告者不另扣包庄分
+      if (account.seat === winnerInfo.seat) {
+        for (const r of ranks) {
+          scores[r.seat] = r.role === '赢家' ? 12 : r.role === '大庄' ? -12 : 0
+        }
+      } else {
+        for (const r of ranks) {
+          if (r.seat === account.seat) scores[r.seat] = -12
+          else if (r.seat === winnerInfo.seat) scores[r.seat] = 12
+          else scores[r.seat] = 0
+        }
       }
     }
     return {
