@@ -1,4 +1,4 @@
-import { tilePoints } from './tiles.js'
+import { tilePoints, TILES } from './tiles.js'
 
 /**
  * 座位约定：0=掷骰者, 1=下家, 2=对家, 3=上家；逆时针 0→1→2→3。
@@ -141,4 +141,63 @@ export function canRedeal(hand) {
   const hasRedTen = hand.some((t) => t.a === 4 && t.b === 6)
   if (redEights.length === 2 && !hasRedTen) return true
   return hand.every((t) => t.a === t.b)
+}
+
+// ---------- 算账（封账）宣告 ----------
+
+/** 账种定义：冻结端组合 → 账种名。key = 排序后的两端点数字串 */
+const ACCOUNT_TYPES = {
+  '4,4': '红账',
+  '1,1': '幺账',
+  '5,5': '五账',
+  '2,3': '三二账',
+}
+
+/** 账种 → settings 布尔字段 */
+const ACCOUNT_KEY = { 红账: 'red', 幺账: 'yao', 三二账: 'erSan', 五账: 'wu' }
+
+/**
+ * 端点 P 是否被冻结：所有含 P 的竖牌（非对子）都已在链上。
+ * afterChain：模拟接牌后的链上全部牌（含刚出的这张）；P 为冻结端点。
+ */
+function endFrozen(p, afterChain) {
+  return !TILES.some(
+    (t) => t.type === '竖牌' && (t.a === p || t.b === p) &&
+      !afterChain.some((c) => c.id === t.id)
+  )
+}
+
+/**
+ * 判定「这张牌接某端」是否构成算账宣告项。
+ * @param tile 手里要出的牌
+ * @param openEnds 当前链两端 { top, bottom }；null（头牌首出）恒无宣告
+ * @param chainTiles 链上全部已出的牌（tableHistory 的 tiles 展开）
+ * @param hand 我当前手牌（含 tile；用于三二账「还有其他可接牌」判定）
+ * @param settings 算账设置
+ * @returns {{ type: string, side: 'bottom'|'top' }[]} 可宣告项
+ */
+export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
+  if (!settings || !settings.enabled || !openEnds) return []
+  const sides = placeSides(tile, openEnds)
+  if (sides.length === 0) return []
+  const afterChain = [...chainTiles, tile]
+  const opts = []
+  for (const { side, mirrored } of sides) {
+    // 复用 play 的新端计算：bottom 接后 bottom = mirrored ? tile.b : tile.a；top 对称
+    const newEnds = side === 'bottom'
+      ? { top: openEnds.top, bottom: mirrored ? tile.b : tile.a }
+      : { top: mirrored ? tile.a : tile.b, bottom: openEnds.bottom }
+    const key = [newEnds.top, newEnds.bottom].sort((a, b) => a - b).join(',')
+    const type = ACCOUNT_TYPES[key]
+    if (!type) continue
+    if (!endFrozen(newEnds.top, afterChain) || !endFrozen(newEnds.bottom, afterChain)) continue
+    if (!settings[ACCOUNT_KEY[type]]) continue
+    if (type === '三二账') {
+      // 特殊条件：手里除这张牌外还有其他可接牌（故意不出别的偏选这张）
+      const others = hand.filter((t) => t.id !== tile.id)
+      if (!playableTilesEnds(others, openEnds).length) continue
+    }
+    opts.push({ type, side })
+  }
+  return opts
 }

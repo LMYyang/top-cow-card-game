@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   canFollow, playableTiles, mustDiscard, playableForLead,
   canFollowEnds, playableTilesEnds, mustDiscardEnds, placeSides,
-  settle, diceToSeatOffset, seatName, canRedeal,
+  settle, diceToSeatOffset, seatName, canRedeal, declarationFor,
 } from '../src/core/rules.js'
 import { tile } from './helpers.js'
 
@@ -222,5 +222,106 @@ describe('canRedeal 申请重新发牌条件', () => {
   })
   it('空手牌：不满足', () => {
     expect(canRedeal([])).toBe(false)
+  })
+})
+
+const FULL_ON = { enabled: true, red: true, yao: true, erSan: true, wu: true }
+
+describe('declarationFor 算账宣告判定', () => {
+  // ---- 红账：链上已有红十 t4-1，我持红十 t4-2，两端 4 和 6，接 6 端 → 两端皆 4，只剩红八能接
+  // （6 端在链底：bottom=6；接 bottom 暴露 4 → 端 4,4 封账）
+  const redEnds = { top: 4, bottom: 6 }
+  const redChain = [tile('t4-1')] // 链上已有另一张红十
+  it('红账正例：红十接 6 端（bottom）返回红账', () => {
+    const hand = [tile('t4-2'), tile('t5-1')]
+    const opts = declarationFor(tile('t4-2'), redEnds, redChain, hand, FULL_ON)
+    expect(opts).toEqual([{ type: '红账', side: 'bottom' }])
+  })
+  it('红账反例：红十接 4 端不算账', () => {
+    const hand = [tile('t4-2'), tile('t5-1')]
+    // { top: 4, bottom: 6 } 接 top（暴露 6）→ 端 6,4：6 端不冻结（一六/幺六等可接）
+    const opts = declarationFor(tile('t4-2'), redEnds, redChain, hand, FULL_ON)
+    expect(opts.some(o => o.side === 'top')).toBe(false)
+  })
+  it('红账反例：链上没有另一张红十（4 端不冻结）', () => {
+    const hand = [tile('t4-2'), tile('t5-1')]
+    const chain = [tile('t2-1')] // 链上只有二板，没有红十
+    const opts = declarationFor(tile('t4-2'), { top: 4, bottom: 6 }, chain, hand, FULL_ON)
+    expect(opts).toEqual([])
+  })
+  it('红账反例：红八（横牌）不触发', () => {
+    const hand = [tile('t5-1'), tile('t5-2')]
+    const opts = declarationFor(tile('t5-1'), { top: 4, bottom: 4 }, [tile('t4-1')], hand, FULL_ON)
+    expect(opts).toEqual([])
+  })
+
+  // ---- 幺账：链上已有 5 张带 1 竖牌（幺三×2 幺五×2 幺六×1），我持幺六 t7-2，两端 1 和 6，接 6 端
+  // （6 端在链底：bottom=6；接 bottom 暴露 1 → 端 1,1 封账）
+  const yaoChain = [tile('t9-1'), tile('t9-2'), tile('t8-1'), tile('t8-2'), tile('t7-1')]
+  it('幺账正例：幺六接 6 端返回幺账', () => {
+    const hand = [tile('t7-2'), tile('t11-1')]
+    const opts = declarationFor(tile('t7-2'), { top: 1, bottom: 6 }, yaoChain, hand, FULL_ON)
+    expect(opts).toEqual([{ type: '幺账', side: 'bottom' }])
+  })
+  it('幺账反例：链上缺一张带 1 竖牌', () => {
+    const hand = [tile('t7-2'), tile('t11-1')]
+    const opts = declarationFor(tile('t7-2'), { top: 1, bottom: 6 }, yaoChain.slice(0, 4), hand, FULL_ON)
+    expect(opts).toEqual([])
+  })
+
+  // ---- 五账：链上已有 3 张带 5 竖牌（虎头×2 + 幺五×1），我持幺五 t8-2（唯一 5 端另一张已用），
+  //      两端 5 和 1，接 1 端 → 两端皆 5，只剩大五能接
+  // （1 端在链底：bottom=1；接 bottom 暴露 5 → 端 5,5 封账）
+  const wuChain = [tile('t2-1'), tile('t2-2'), tile('t8-1')]
+  it('五账正例：幺五接 1 端返回五账', () => {
+    const hand = [tile('t8-2'), tile('t11-1')]
+    const opts = declarationFor(tile('t8-2'), { top: 5, bottom: 1 }, wuChain, hand, FULL_ON)
+    expect(opts).toEqual([{ type: '五账', side: 'bottom' }])
+  })
+  it('五账反例：虎头接 5 端（接的正是封点那端）不算账', () => {
+    // 我持虎头 t2-1？不可能（t2-1 在链上）。构造：链上有 3 张带 5 竖牌，我持另一张虎头
+    const chain = [tile('t2-1'), tile('t8-1'), tile('t8-2')] // 虎头×1 + 幺五×2
+    const hand = [tile('t2-2'), tile('t11-1')]
+    // 两端 5 和 6：虎头接 6 端暴露 5 → 冻结；接 5 端暴露 6 → 不冻结
+    const opts = declarationFor(tile('t2-2'), { top: 5, bottom: 6 }, chain, hand, FULL_ON)
+    expect(opts).toEqual([{ type: '五账', side: 'bottom' }])
+  })
+
+  // ---- 三二账：链上有幺三×1 + 三六 + 二六（4 张中的 3 张），我持幺三 t9-2，两端 1 和 2，
+  //      接 1 端暴露 3 → 端 2,3 冻结（幺三×2/三六/二六全上链）
+  // （1 端在链底：bottom=1；接 bottom 暴露 3 → 端 2,3 封账）
+  const esChain = [tile('t9-1'), tile('t12-1'), tile('t13-1')]
+  it('三二账正例：手里有其他可接牌时选这张返回三二账', () => {
+    const hand = [tile('t9-2'), tile('t11-1'), tile('t1-1')]
+    // t11-1 地幺 1/1 可接 1 端（=其他可接牌）
+    const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
+    expect(opts).toEqual([{ type: '三二账', side: 'bottom' }])
+  })
+  it('三二账反例：手里没有其他可接牌时不弹算账', () => {
+    const hand = [tile('t9-2'), tile('t3-1')] // 长三 3/3 接不上 1/2 端
+    const opts = declarationFor(tile('t9-2'), { top: 2, bottom: 1 }, esChain, hand, FULL_ON)
+    expect(opts).toEqual([])
+  })
+  it('三二账反例：这张牌接不了任何一端', () => {
+    const hand = [tile('t9-2'), tile('t11-1')]
+    const opts = declarationFor(tile('t9-2'), { top: 5, bottom: 4 }, esChain, hand, FULL_ON)
+    expect(opts).toEqual([])
+  })
+
+  // ---- 开关与账种过滤
+  it('总开关关闭恒空', () => {
+    const hand = [tile('t4-2'), tile('t5-1')]
+    const opts = declarationFor(tile('t4-2'), redEnds, redChain, hand, { ...FULL_ON, enabled: false })
+    expect(opts).toEqual([])
+  })
+  it('账种未勾选不返回', () => {
+    const hand = [tile('t4-2'), tile('t5-1')]
+    const opts = declarationFor(tile('t4-2'), redEnds, redChain, hand, { ...FULL_ON, red: false })
+    expect(opts).toEqual([])
+  })
+  it('头牌首出场景（openEnds=null）恒空', () => {
+    const hand = [tile('t4-2'), tile('t5-1')]
+    const opts = declarationFor(tile('t4-2'), null, [], hand, FULL_ON)
+    expect(opts).toEqual([])
   })
 })
