@@ -538,6 +538,16 @@ watch(
 )
 onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2); clearTimeout(splashTimer3) })
 
+// 轮到我出牌提示音：myTurn false→true 且 PLAYING 才响（掷骰/结算/亮牌不响，扣牌回合不响）。
+// armed 吞首响：进局/重连瞬间本来正轮到我（首次翻转是初始局面而非轮转）不响，
+// 之后每次真轮转都响。restart 走 redirectTo 重开页面，setup 重跑 armed 自然复位。
+const turnSoundArmed = ref(false)
+watch(myTurn, (v, ov) => {
+  if (!v || ov || view.value.state !== 'PLAYING') return
+  if (!turnSoundArmed.value) { turnSoundArmed.value = true; return }
+  play('turn')
+})
+
 // 牌桌震动：特效拍桌瞬间（slammed 翻转）触发 0.3s 抖动，先复位 class 再下一帧挂上，保证重复触发
 const tableShake = ref(false)
 let splashTimer3 = null
