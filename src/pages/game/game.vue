@@ -5,6 +5,7 @@
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
     <button class="btn-home" @click.stop="confirmGoHome">‹ 主菜单</button>
+    <button class="btn-home btn-mute" @click.stop="toggleMute">{{ muted ? '🔇' : '🔊' }}</button>
     <!-- 联网模式房间号：左上角小徽标（不遮牌面） -->
     <view v-if="isNet && roomNum" class="room-badge">房间 {{ roomNum }}</view>
     <!-- 对家（上）：座位按我的座位旋转——每人都看到自己在下方位，相对方位不变，头像颜色对应同一人 -->
@@ -26,7 +27,7 @@
           <view v-if="leaderRevealed" class="dice-result">{{ diceResultText }}</view>
           <!-- 掷骰权在我时才显示按钮；他人掷骰时到点自动掷，仅显示状态文案（solo: 0=我；net: 服务器 rollerSeat）。
                落定（fx.dice 有值）后隐藏按钮，避免落定→揭示头牌间隙按钮复活被重复点击；重开发牌由 resetDiceUi 清 fx.dice 后恢复 -->
-          <button v-else-if="diceRollerSeat === mySeatVal && !fx.dice" class="btn-primary" :disabled="fx.diceRolling" @click="roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
+          <button v-else-if="diceRollerSeat === mySeatVal && !fx.dice" class="btn-primary" :disabled="fx.diceRolling" @click="play('dice-roll'); roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
           <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
@@ -157,6 +158,7 @@ import PlayerAvatar from '../../components/PlayerAvatar.vue'
 import { placeSides, diceToSeatOffset, declarationFor } from '../../core/rules.js'
 import { useGame } from '../../composables/useGame.js'
 import { useNetGame } from '../../composables/useNetGame.js'
+import { useSound } from '../../composables/useSound.js'
 import { sharedNet } from '../../utils/net.js'
 
 /**
@@ -165,6 +167,7 @@ import { sharedNet } from '../../utils/net.js'
  * 全部绑定走 computed 代理 + 空对象兜底（gameApi 就绪前模板已在渲染）；
  * solo 的 view/fx 为 reactive 对象、net 的 myTurn 等为 computed，isRef 区分后统一解包。
  */
+const { play, muted, toggleMute } = useSound()
 const isNet = ref(false)
 const gameApi = ref(null)
 onLoad((query) => {
@@ -247,7 +250,7 @@ async function myPlay(tileId, side) {
 }
 async function myDiscard(tileId) {
   const res = await gameApi.value?.myDiscard(tileId)
-  if (res?.ok) selectedId.value = null
+  if (res?.ok) { selectedId.value = null; play('tile-discard') }
   else {
     uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
     if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
@@ -349,6 +352,7 @@ watch(
     } else {
       if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
       if (!fx.value.dice) return // 非落定（如重置），不进入揭示流程
+      play('dice-land')
       // 落定：先复位 class 以便重复触发回弹动画
       diceLanded.value = false
       requestAnimationFrame(() => {
@@ -531,6 +535,7 @@ const tableShake = ref(false)
 let splashTimer3 = null
 watch(accountSlammed, (v) => {
   if (!v) return
+  play('account-slam')
   tableShake.value = false
   requestAnimationFrame(() => {
     requestAnimationFrame(() => { tableShake.value = true })
@@ -665,6 +670,7 @@ function playFly(entry) {
     fly.moving = false
     latestHidden.value = false
     flyLanded.value = true // 落地：放行终局亮牌/结算
+    play('tile-play')
   }, 950)
 }
 onUnmounted(() => clearTimeout(flyTimer))
@@ -675,7 +681,12 @@ onUnmounted(() => clearTimeout(settlePaceTimer))
 function paceSettle() {
   clearTimeout(settlePaceTimer)
   settleBrief.value = true
-  settlePaceTimer = setTimeout(() => { fx.value.revealKept = true }, 1000)
+  // 结算音：以我的积分为准（正=赢 上扬琶音/负=输 下坠音/无 winner 缺失=中性单音）。
+  // winner 是"最小扣点者"，平局/我没赢时它不等于"我赢"，故以 s>0 为主判据
+  const r = view.value.result
+  const s = r?.scores?.[mySeatVal.value] || 0
+  play(r?.winner === undefined || r?.winner === null ? 'settle-draw' : s > 0 ? 'settle-win' : 'settle-lose')
+  settlePaceTimer = setTimeout(() => { fx.value.revealKept = true; play('reveal-flip') }, 1000)
 }
 
 /** 监听桌面历史：出现新出牌条目即起飞克隆牌（扣牌条目不飞）。solo 与 net 共用（数据源都是 tableHistory）。
@@ -789,6 +800,13 @@ function confirmGoHome() {
 .btn-home {
   position: fixed; top: 16rpx; right: 16rpx; z-index: 50;
   font-size: 24rpx; line-height: 1.4; padding: 10rpx 22rpx; margin: 0;
+  background: rgba(58, 44, 20, 0.85); color: #b0a685;
+  border: 2rpx solid #5a4a32; border-radius: 999rpx;
+}
+/* 静音开关：与主菜单按钮并排（主菜单 fixed right:16rpx，本按钮在其左侧） */
+.btn-mute {
+  position: fixed; top: 16rpx; right: 128rpx; z-index: 50;
+  font-size: 24rpx; line-height: 1.4; padding: 10rpx 18rpx; margin: 0;
   background: rgba(58, 44, 20, 0.85); color: #b0a685;
   border: 2rpx solid #5a4a32; border-radius: 999rpx;
 }
