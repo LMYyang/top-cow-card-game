@@ -14,6 +14,7 @@
 //   win        本局你赢                    轻快喜庆短音
 //   lose       本局你输                    低沉柔和，不闹心
 //   bgm        局内背景音乐（循环）        舒缓国风轻音乐，音量压低
+//   turn       轮到你出牌                  木质双音"叩叩"（温和提醒）
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -236,6 +237,14 @@ const sounds = {}
     mix(out, pluck(PENTA[3] / 2, 0.7, 0.14, r), base + barDur * 0.6)
   }
   sounds.bgm = out
+}
+
+// 10. turn：轮到你出牌——木质双音"叩叩"（D5+A5 拨弦，温和提醒，比 click 温和比 suanzhang 轻）
+{
+  const out = silence(0.5)
+  mix(out, pluck(587.33, 0.16, 0.55, rng(51))) // D5
+  mix(out, pluck(880, 0.28, 0.5, rng(52)), 0.08) // A5 高五度，错开 80ms
+  sounds.turn = out
 }
 
 mkdirSync(OUT, { recursive: true })
