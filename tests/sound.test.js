@@ -8,11 +8,11 @@ const ctxFactory = () => ({
   stop: vi.fn(),
   onError: vi.fn(),
 })
-const ctxs = {}
+let lastCtx = null // 最新创建的音频实例（工厂返回后 useSound 才设 src，故用引用而非 src 键注册）
 globalThis.uni = {
   createInnerAudioContext: vi.fn(() => {
     const c = ctxFactory()
-    ctxs[c.src] = c
+    lastCtx = c
     return c
   }),
   getStorageSync: vi.fn(() => ''),
@@ -38,24 +38,21 @@ describe('useSound', () => {
     s.play('tile-play')
     now.mockRestore()
     expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
-    const ctx = Object.values(ctxs)[0]
-    expect(ctx.src).toContain('/static/sounds/tile-play.wav')
-    expect(ctx.play).toHaveBeenCalledTimes(2)
+    expect(lastCtx.src).toContain('/static/sounds/tile-play.wav')
+    expect(lastCtx.play).toHaveBeenCalledTimes(2)
   })
 
   it('防重入：同名 50ms 内重复调用被忽略', () => {
-    vi.useFakeTimers()
     const s = useSound()
     const now = vi.spyOn(Date, 'now')
     now.mockReturnValue(1000)
     s.play('reveal-flip')
     now.mockReturnValue(1049) // 49ms 内
     s.play('reveal-flip')
-    expect(Object.values(ctxs)[0].play).toHaveBeenCalledTimes(1)
+    expect(lastCtx.play).toHaveBeenCalledTimes(1)
     now.mockReturnValue(1051) // 51ms，放行
     s.play('reveal-flip')
-    expect(Object.values(ctxs)[0].play).toHaveBeenCalledTimes(2)
-    vi.useRealTimers()
+    expect(lastCtx.play).toHaveBeenCalledTimes(2)
     now.mockRestore()
   })
 
