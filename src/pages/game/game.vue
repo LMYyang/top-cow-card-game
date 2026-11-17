@@ -538,12 +538,12 @@ watch(
 )
 onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2); clearTimeout(splashTimer3) })
 
-// 轮到我出牌提示音：myTurn false→true 且 PLAYING 才响（掷骰/结算/亮牌不响，扣牌回合不响）。
-// armed 吞首响：进局/重连瞬间本来正轮到我（首次翻转是初始局面而非轮转）不响，
-// 之后每次真轮转都响。restart 走 redirectTo 重开页面，setup 重跑 armed 自然复位。
-const turnSoundArmed = ref(false)
-watch(myTurn, (v, ov) => {
-  if (!v || ov || view.value.state !== 'PLAYING') return
+// 轮到我出牌提示音：myTurn false→true 且 PLAYING 且非扣牌回合才响（掷骰/结算/亮牌不响，扣牌回合不响）。
+// armed 吞首响：进局/重连瞬间本来正轮到我（armed 初始即 true，首次翻转被吞），
+// AI 先行等正常轮转首次翻转则放行。restart 走 redirectTo 重开页面，setup 重跑 armed 自然复位。
+const turnSoundArmed = ref(myTurn.value)
+watch(myTurn, (v) => {
+  if (!v || mustDiscard.value || view.value.state !== 'PLAYING') return
   if (!turnSoundArmed.value) { turnSoundArmed.value = true; return }
   play('turn')
 })
