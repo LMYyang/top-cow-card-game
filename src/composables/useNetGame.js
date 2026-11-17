@@ -55,11 +55,13 @@ export function useNetGame(net = sharedNet()) {
   })
   /** 联网局落史：随 game.over 只记一次（game.over 服务器仅终局发一次）。
    *  昵称表来自最近一次 game.state 的 names（绝对座位）；掉线兜底用占位称呼。
-   *  统计不写 dingniuzi_stats（那是单机口径）：主页联网积分/已对局从历史条目实时汇总。 */
+   *  统计不写 dingniuzi_stats（那是单机口径）：主页联网积分/已对局从历史条目实时汇总。
+   *  roomId 随局落史：主页「场次汇总」按它把同房多局归成一场统计总积分（全端一致）。 */
   function saveNetHistory(result) {
     const entry = {
       time: Date.now(),
       mode: 'net', // 历史列表区分单机/联网
+      roomId: roomId.value ?? null, // 场次归属（老版本条目无此字段，汇总层兜底）
       scores: result.scores,
       roles: Object.fromEntries((result.ranks || []).map((r) => [r.seat, r.role])),
       points: Object.fromEntries((result.ranks || []).map((r) => [r.seat, r.points])),

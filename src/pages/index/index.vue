@@ -38,10 +38,33 @@
     <view v-if="historyOpen" class="settle-overlay" @click="historyOpen = false">
       <view class="history-modal" @click.stop>
         <view class="modal-header">
-          <text class="modal-title" :class="{ net: historyMode === 'net' }">{{ historyMode === 'net' ? '联网对战记录' : '单机对战记录' }}</text>
+          <text class="modal-title" :class="{ net: historyMode === 'net' }">{{ historyMode === 'net' ? '联网对战' : '单机对战' }}</text>
           <text class="modal-close" @click="historyOpen = false">✕</text>
         </view>
-        <view class="history-list">
+        <!-- 联网模式页签：场次汇总（按房间统计总积分）与逐局记录分开查看 -->
+        <view v-if="historyMode === 'net'" class="net-tabs">
+          <text class="net-tab" :class="{ on: netTab === 'sessions' }" @click="switchNetTab('sessions')">场次积分</text>
+          <text class="net-tab" :class="{ on: netTab === 'rounds' }" @click="switchNetTab('rounds')">逐局记录</text>
+        </view>
+        <!-- 页签一：场次汇总（仅联网）：同房多局按 roomId 归成一场，统计每人总积分——朋友局终了对账用 -->
+        <view v-if="historyMode === 'net' && netTab === 'sessions'" class="history-list session-list">
+          <view v-if="netSessions.length === 0" class="history-empty">还没有场次记录</view>
+          <view v-for="s in netSessions" :key="s.roomId ?? 'legacy'" class="session-card" @click="toggleExpand('s' + (s.roomId ?? 'legacy'))">
+            <view class="session-head">
+              <text class="session-title">{{ s.roomId ? `房间 ${s.roomId}` : '早期对局' }}</text>
+              <text class="session-rounds">{{ s.rounds }} 局 · {{ formatTime(s.lastTime) }}</text>
+              <text class="item-expand">{{ expandedIdx === 's' + (s.roomId ?? 'legacy') ? '收起 ▲' : '展开 ▼' }}</text>
+            </view>
+            <view v-if="expandedIdx === 's' + (s.roomId ?? 'legacy')" class="session-rows">
+              <view v-for="p in s.players" :key="p.seat" class="session-row" :class="{ champ: p.total === s.players[0].total && s.players[0].total > 0 }">
+                <text class="session-name">{{ p.name }}</text>
+                <text class="session-score" :class="{ negative: p.total < 0 }">{{ p.total > 0 ? '+' : '' }}{{ p.total }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+        <!-- 页签二：逐局记录（联网）/ 单机记录（无页签） -->
+        <view v-if="historyMode === 'solo' || netTab === 'rounds'" class="history-list">
           <view v-if="modeHistory.length === 0" class="history-empty">还没有对局记录</view>
           <view
             v-for="(h, i) in pagedHistory"
@@ -125,12 +148,59 @@ const modeHistory = computed(() =>
   history.value.filter((h) => (historyMode.value === 'net' ? h.mode === 'net' : h.mode !== 'net'))
 )
 
+// ---- 联网场次汇总：按 roomId 把同房多局归成一场，统计每人总积分 ----
+// 数据口径：scores/roomId 服务器统一裁决、全端一致（朋友间可对账）；names 为本端视角快照。
+// 老版本条目无 roomId（null）：单独归「早期对局」组，不与新版场次混算。
+const netSessions = computed(() => {
+  const netEntries = history.value.filter((h) => h.mode === 'net')
+  const groups = new Map() // key → { roomId, entries[] }
+  for (const h of netEntries) {
+    const key = h.roomId ?? 'legacy'
+    if (!groups.has(key)) groups.set(key, { roomId: h.roomId ?? null, entries: [] })
+    groups.get(key).entries.push(h)
+  }
+  return [...groups.values()]
+    .map(({ roomId, entries }) => {
+      // 局数与每人总积分；昵称取该场最新一局的 names（座位→人中途可能因掉线重进而变化）
+      const bySeat = {}
+      for (const h of entries) {
+        for (const seat of [0, 1, 2, 3]) {
+          totalSeat(bySeat, seat, h.scores?.[seat] || 0)
+        }
+      }
+      const names = entries[0]?.names || {}
+      const players = [0, 1, 2, 3]
+        .map((seat) => ({ seat, name: names[seat] || `座位${seat}`, total: bySeat[seat] || 0 }))
+        .sort((a, b) => b.total - a.total) // 总分高在前
+      return {
+        roomId,
+        rounds: entries.length,
+        lastTime: entries[0]?.time || 0, // 条目最新在前，取首条
+        players,
+      }
+    })
+    .sort((a, b) => b.lastTime - a.lastTime) // 场次按最近对局时间新→旧
+})
+/** 汇总累加小助手（避免 reduce 嵌套难读） */
+function totalSeat(map, seat, delta) {
+  map[seat] = (map[seat] || 0) + delta
+}
+
 /** 点统计卡「单机/联网」区域：打开对应模式的历史弹框（每次打开重置展开与页码） */
 function openHistory(mode) {
   historyMode.value = mode
+  netTab.value = 'sessions' // 联网默认看场次积分（对账是高频诉求），单机无页签不受影响
   expandedIdx.value = -1
   page.value = 1
   historyOpen.value = true
+}
+
+// 联网弹框页签：'sessions' 场次积分汇总 | 'rounds' 逐局记录
+const netTab = ref('sessions')
+function switchNetTab(tab) {
+  netTab.value = tab
+  expandedIdx.value = -1
+  page.value = 1
 }
 
 // 分页：每 20 条一页
@@ -242,6 +312,29 @@ function openSettings() {
 
 /* 历史列表（弹框内） */
 .history-list { display: flex; flex-direction: column; gap: 12rpx; overflow-y: auto; }
+/* 联网弹框页签：场次积分 / 逐局记录 两个独立列表的切换 */
+.net-tabs { display: flex; gap: 12rpx; }
+.net-tab {
+  flex: 1; text-align: center; padding: 12rpx 0; border-radius: 10rpx;
+  font-size: 26rpx; color: #b0a685; background: rgba(58, 44, 20, 0.4); border: 2rpx solid #4a3c22;
+}
+.net-tab.on { color: #c9a227; border-color: #c9a227; background: rgba(201, 162, 39, 0.14); font-weight: bold; }
+/* 场次汇总（仅联网弹框）：同房多局一场一卡 */
+.session-list { display: flex; flex-direction: column; gap: 12rpx; }
+.session-card {
+  padding: 16rpx 24rpx; border-radius: 12rpx;
+  background: rgba(201, 162, 39, 0.08); border: 2rpx solid #6a5632;
+}
+.session-head { display: flex; align-items: center; gap: 16rpx; }
+.session-title { font-size: 26rpx; font-weight: bold; color: #c9a227; flex: 1; }
+.session-rounds { font-size: 22rpx; color: #b0a685; }
+.session-rows { margin-top: 12rpx; display: flex; flex-direction: column; gap: 8rpx; }
+.session-row { display: flex; align-items: center; justify-content: space-between; padding: 4rpx 8rpx; border-radius: 8rpx; }
+.session-row.champ { background: rgba(201, 162, 39, 0.14); }
+.session-row.champ .session-name { color: #c9a227; font-weight: bold; }
+.session-name { font-size: 24rpx; color: #f5f0e1; }
+.session-score { font-size: 26rpx; font-weight: bold; color: #f5f0e1; }
+.session-score.negative { color: #a04030; }
 .history-empty { text-align: center; color: #b0a685; font-size: 24rpx; padding: 24rpx 0; }
 .history-item {
   padding: 16rpx 24rpx; border-radius: 12rpx;

@@ -153,6 +153,39 @@ describe('useNetGame', () => {
     uni.setStorageSync = vi.fn() // 还原 mock，避免污染其他用例
   })
 
+  it('落史带 roomId（场次归属）：game.state 推送过 roomId 后 game.over 条目携带同值', () => {
+    const net = fakeNet()
+    const stored = {}
+    uni.setStorageSync = (k, v) => { stored[k] = v }
+    const { roomId } = useNetGame(net)
+    net.__push('game.state', {
+      view: { state: 'PLAYING', currentSeat: 0, openEnds: null, myHand: [], myKept: [], opponents: [], tableHistory: [], tableTile: null, leaderSeat: 0, rollerSeat: 0, result: null },
+      fx: {}, roomId: 515077, yourSeat: 0, names: {},
+    })
+    net.__push('game.over', {
+      result: { winner: 0, ranks: [{ seat: 0, points: 0, role: '赢家' }], scores: { 0: 6 } },
+      view: { state: 'SETTLE', currentSeat: 0, openEnds: { top: 4, bottom: 6 }, myHand: [], myKept: [], opponents: [], tableTile: null, leaderSeat: 0, rollerSeat: 0, result: null, tableHistory: [] },
+      fx: {},
+    })
+    expect(roomId.value).toBe(515077)
+    expect(stored['dingniuzi_history'][0].roomId).toBe(515077)
+    uni.setStorageSync = vi.fn()
+  })
+
+  it('落史 roomId 兜底：未收到 roomId 推送时条目带 null（老数据汇总层归早期对局）', () => {
+    const net = fakeNet()
+    const stored = {}
+    uni.setStorageSync = (k, v) => { stored[k] = v }
+    useNetGame(net)
+    net.__push('game.over', {
+      result: { winner: 1, ranks: [{ seat: 1, points: 0, role: '赢家' }], scores: { 1: 6 } },
+      view: { state: 'SETTLE', currentSeat: 1, openEnds: { top: 4, bottom: 6 }, myHand: [], myKept: [], opponents: [], tableTile: null, leaderSeat: 1, rollerSeat: 1, result: null, tableHistory: [] },
+      fx: {},
+    })
+    expect(stored['dingniuzi_history'][0].roomId).toBe(null)
+    uni.setStorageSync = vi.fn()
+  })
+
   it('restart 发 settleContinue', async () => {
     const net = fakeNet()
     const { restart } = useNetGame(net)
