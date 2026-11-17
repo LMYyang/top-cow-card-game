@@ -4,7 +4,7 @@
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
-    <button class="btn-home" @click.stop="play('click'); confirmGoHome">‹ 主菜单</button>
+    <button class="btn-home" @click.stop="play('click'); confirmGoHome()">‹ 主菜单</button>
     <button class="btn-home btn-mute" @click.stop="toggleMute">{{ muted ? '🔇' : '🔊' }}</button>
     <!-- 联网模式房间号：左上角小徽标（不遮牌面） -->
     <view v-if="isNet && roomNum" class="room-badge">房间 {{ roomNum }}</view>
@@ -38,7 +38,7 @@
             {{ turnText }}
           </view>
           <!-- 申请重新发牌：发牌后、首出前且我满足牌型时显示（solo/net 双模式） -->
-          <button v-if="canRedealNow" class="btn-primary btn-redeal" :disabled="redealBusy" @click="play('click'); onRedeal">申请重新发牌</button>
+          <button v-if="canRedealNow" class="btn-primary btn-redeal" :disabled="redealBusy" @click="play('click'); onRedeal()">申请重新发牌</button>
         </template>
         <template v-else-if="view.state === 'SETTLE'">
           <!-- 终局最后一张也要飞：latest-hidden 必须传，否则状态翻 SETTLE 时此分支重新挂载
@@ -127,8 +127,8 @@
           </text>
         </view>
         <view class="settle-actions">
-          <button class="btn-primary" @click="play('click'); restart">再来一局</button>
-          <button class="btn-secondary" @click="play('click'); goHome">回主菜单</button>
+          <button class="btn-primary" @click="play('click'); restart()">再来一局</button>
+          <button class="btn-secondary" @click="play('click'); goHome()">回主菜单</button>
         </view>
       </view>
     </view>
@@ -139,7 +139,7 @@
         <text class="settle-title">返回主菜单</text>
         <text class="home-confirm-text">{{ homeConfirmText }}</text>
         <view class="settle-actions">
-          <button class="btn-primary" @click="play('click'); goHome">退出</button>
+          <button class="btn-primary" @click="play('click'); goHome()">退出</button>
           <button class="btn-secondary" @click="play('click'); homeConfirmShow = false">继续玩</button>
         </view>
       </view>
