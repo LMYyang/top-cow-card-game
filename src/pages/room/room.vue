@@ -151,13 +151,31 @@ function openSettings() {
   uni.navigateTo({ url: `/pages/settings/settings?${q}` })
 }
 
+/**
+ * 房间请求错误统一处理：房间被服务器 sweep 销毁（长时间无人活动）后，页面停留的任何操作
+ * （换座/准备/开始/踢人/提醒/结算继续）都会收到 ROOM_GONE 回执。此时页面已不可用：
+ * toast 原因 → 清本地 token（服务器已删）→ 跳回联网大厅，让玩家重新建房/匹配。
+ * 其余错误仍走原 toast 不跳转（如「只有房主能修改设置」这类可恢复提示）。
+ */
+function handleRoomError(res, fallback = '请求失败') {
+  const code = res?.payload?.code
+  const message = res?.payload?.message || fallback
+  if (code === 'ROOM_GONE') {
+    uni.removeStorageSync('dingniuzi_player_token')
+    uni.showToast({ title: message, icon: 'none' })
+    setTimeout(() => uni.reLaunch({ url: '/pages/lobby/lobby' }), 1500) // 留 1.5s 看清提示
+    return
+  }
+  uni.showToast({ title: message, icon: 'none' })
+}
+
 async function tapSeat(seat) {
   if (!room.value || mySeat.value === null) return // reconnect 快照未到时无从判断自己座位
   if (seat === mySeat.value || memberOf(seat)) return
   if (roomSettling.value) { uni.showToast({ title: '结算中，稍后再换座位', icon: 'none' }); return }
   try {
     const res = await net.request('room.seat', { seat })
-    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+    if (res.type === 'error') handleRoomError(res)
     else mySeat.value = seat // room.seat.ok 回执无座位号，本地记账；状态以 room.state 推送为准
   } catch (e) {
     uni.showToast({ title: e.message || '请求失败', icon: 'none' })
@@ -170,7 +188,7 @@ async function setReady(ready) {
     if (ready) {
       try {
         const res = await net.request('game.settleContinue', {})
-        if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+        if (res.type === 'error') handleRoomError(res)
       } catch (e) {
         uni.showToast({ title: e.message || '请求失败', icon: 'none' })
       }
@@ -179,7 +197,7 @@ async function setReady(ready) {
   }
   try {
     const res = await net.request('room.ready', { ready })
-    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+    if (res.type === 'error') handleRoomError(res)
   } catch (e) {
     uni.showToast({ title: e.message || '请求失败', icon: 'none' })
   }
@@ -189,7 +207,7 @@ async function kick(member) {
   if (roomSettling.value) { uni.showToast({ title: '结算中，稍后再操作', icon: 'none' }); return }
   try {
     const res = await net.request('room.kick', { token: member.token })
-    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+    if (res.type === 'error') handleRoomError(res)
   } catch (e) {
     uni.showToast({ title: e.message || '请求失败', icon: 'none' })
   }
@@ -198,7 +216,7 @@ async function poke(member) {
   if (roomSettling.value) return // 「提醒准备」按钮在结算态不渲染，防御性守卫
   try {
     const res = await net.request('room.poke', { token: member.token })
-    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+    if (res.type === 'error') handleRoomError(res)
     else uni.showToast({ title: '已提醒', icon: 'none' })
   } catch (e) {
     uni.showToast({ title: e.message || '请求失败', icon: 'none' })
@@ -207,7 +225,7 @@ async function poke(member) {
 async function start() {
   try {
     const res = await net.request('game.start', {})
-    if (res.type === 'error') uni.showToast({ title: res.payload.message, icon: 'none' })
+    if (res.type === 'error') handleRoomError(res)
   } catch (e) {
     uni.showToast({ title: e.message || '请求失败', icon: 'none' })
   }

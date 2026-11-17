@@ -94,6 +94,15 @@ export function useNetGame(net = sharedNet()) {
   /** UI 视角座位名：自己=「我」，其余显示成员昵称（names 为服务器下发的绝对座位表） */
   const labelOf = (seat) => (seat === mySeat.value ? '我' : names[seat] || `座位${seat}`)
 
+  /** 房间已被服务器销毁（长时间无人活动被 sweep）：toast 后跳回联网大厅。
+   *  牌桌页在房销毁后已不可用（所有 game.* 动作都会 ROOM_GONE），跳大厅让玩家重新匹配；
+   *  延时 1.5s 让玩家看清提示。token 服务器端已随房删除，本地一并清理防误重连。 */
+  function roomGoneRedirect(code) {
+    if (code !== 'ROOM_GONE') return
+    uni.removeStorageSync('dingniuzi_player_token')
+    setTimeout(() => uni.reLaunch({ url: '/pages/lobby/lobby' }), 1500)
+  }
+
   const myTurn = computed(() => view.state === 'PLAYING' && view.currentSeat === mySeat.value)
   const mustDiscard = computed(
     () => myTurn.value && view.openEnds !== null && coreMustDiscardEnds(view.myHand, view.openEnds)
@@ -105,11 +114,14 @@ export function useNetGame(net = sharedNet()) {
     return corePlayableTilesEnds(view.myHand, view.openEnds).map((t) => t.id)
   })
 
-  /** 统一请求出口：type==='error' 回执视为失败（reason 取服务器 message）；网络异常（超时/断线）同样转为失败 */
+  /** 统一请求出口：type==='error' 回执视为失败（reason 取服务器 message）；网络异常（超时/断线）同样转为失败。
+   *  code 透传：ROOM_GONE（房间被服务器 sweep 销毁）等场景页面层需要区分处理（跳转大厅） */
   async function call(type, payload) {
     try {
       const res = await net.request(type, payload)
-      if (res && res.type === 'error') return { ok: false, reason: res.payload?.message || '操作失败' }
+      if (res && res.type === 'error') {
+        return { ok: false, reason: res.payload?.message || '操作失败', code: res.payload?.code }
+      }
       return { ok: true }
     } catch (e) {
       return { ok: false, reason: e.message }
@@ -119,7 +131,7 @@ export function useNetGame(net = sharedNet()) {
   /** 真人掷骰（动画节奏由服务端 fx 驱动，这里仅发请求；失败 toast 服务器原因） */
   async function roll() {
     const res = await call('game.roll', {})
-    if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    if (!res.ok) { uni.showToast({ title: res.reason, icon: 'none' }); roomGoneRedirect(res.code) }
   }
 
   async function myPlay(tileId, side = 'bottom', declare = false) {
@@ -134,7 +146,7 @@ export function useNetGame(net = sharedNet()) {
 
   async function restart() {
     const res = await call('game.settleContinue', {})
-    if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    if (!res.ok) { uni.showToast({ title: res.reason, icon: 'none' }); roomGoneRedirect(res.code) }
     return res.ok // 调用方据此决定是否立即跳回房间页
   }
 
@@ -148,7 +160,7 @@ export function useNetGame(net = sharedNet()) {
   /** 修改房间算账设置（房主、WAITING 阶段），失败 toast */
   async function setRoomSettings(settings) {
     const res = await call('room.setSettings', { settings })
-    if (!res.ok) uni.showToast({ title: res.reason, icon: 'none' })
+    if (!res.ok) { uni.showToast({ title: res.reason, icon: 'none' }); roomGoneRedirect(res.code) }
     return res
   }
 

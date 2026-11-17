@@ -242,12 +242,16 @@ async function myPlay(tileId, side) {
     mySide.value = 'bottom' // 出完复位为默认下端
   } else {
     uni.showToast({ title: res?.reason || '出牌失败', icon: 'none' })
+    if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
   }
 }
 async function myDiscard(tileId) {
   const res = await gameApi.value?.myDiscard(tileId)
   if (res?.ok) selectedId.value = null
-  else uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
+  else {
+    uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
+    if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
+  }
 }
 /** 申请重新发牌（双模式代理）：solo 同步返回对象 / net 为 async 请求，await 兼容两者；
  *  成功后状态回 ROLLING（复位见 state watch）；失败 toast 服务器/核心原因 */
@@ -257,10 +261,20 @@ async function onRedeal() {
   redealBusy.value = true
   try {
     const res = await gameApi.value?.redeal()
-    if (res && !res.ok) uni.showToast({ title: res.reason || '申请失败', icon: 'none' })
+    if (res && !res.ok) {
+      uni.showToast({ title: res.reason || '申请失败', icon: 'none' })
+      if (isNet.value) netRoomGoneRedirect(res.code) // 房间已被服务器销毁：跳回大厅
+    }
   } finally {
     redealBusy.value = false
   }
+}
+
+/** 房间被服务器 sweep 销毁后的跳转（net 专用）：useNetGame 已 toast 原因，这里只负责跳大厅 */
+function netRoomGoneRedirect(code) {
+  if (code !== 'ROOM_GONE') return
+  uni.removeStorageSync('dingniuzi_player_token')
+  setTimeout(() => uni.reLaunch({ url: '/pages/lobby/lobby' }), 1500)
 }
 
 const DICE_FACES = { 1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅' }
@@ -459,6 +473,7 @@ async function onDeclare({ id, side }) {
     mySide.value = 'bottom'
   } else {
     uni.showToast({ title: res?.reason || '宣告失败', icon: 'none' })
+    if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
   }
 }
 
@@ -479,7 +494,10 @@ async function onNoDeclare({ id }) {
   const side = normal ? normal.side : options[0]?.side || 'bottom'
   const res = await gameApi.value?.myPlay(id, side)
   if (res?.ok) { selectedId.value = null; mySide.value = 'bottom' }
-  else uni.showToast({ title: res?.reason || '出牌失败', icon: 'none' })
+  else {
+    uni.showToast({ title: res?.reason || '出牌失败', icon: 'none' })
+    if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
+  }
 }
 
 // ---------- 算账宣告特效 ----------

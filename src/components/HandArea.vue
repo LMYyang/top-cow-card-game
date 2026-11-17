@@ -21,7 +21,7 @@
               class="btn-side btn-declare"
               @click="$emit('declare', { id: t.id, side: d.side, type: d.type })"
             >算{{ d.type.replace('账', '') }}账</button>
-            <button class="btn-side" @click="$emit('no-declare', { id: t.id })">{{ bothEnds ? '不算账（接另一端）' : '不算账' }}</button>
+            <button class="btn-side" @click="$emit('no-declare', { id: t.id })">不算账</button>
           </template>
           <template v-else>
             <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'top' })">上端</button>

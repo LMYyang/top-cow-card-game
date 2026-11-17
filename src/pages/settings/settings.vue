@@ -22,11 +22,13 @@
         </view>
       </template>
     </view>
-    <!-- 牌面样式：纯客户端偏好（单机/联网通用、立即生效），不进算账设置、不联服务器 -->
-    <view class="card skin-card">
+    <!-- 牌面样式：纯客户端偏好（仅主菜单「游戏设置」入口展示），只影响本地渲染；
+         联网房间设置页隐藏（room.setSettings 只同步算账设置，皮肤本就不上传，
+         其他玩家看到的是各自本地的样式/默认样式） -->
+    <view v-if="!isNet" class="card skin-card">
       <view class="skin-header">
         <text class="row-title">牌面样式</text>
-        <text class="row-sub">换一款顺眼的，单机联网通用</text>
+        <text class="row-sub">只改变自己看到的牌面，其他玩家不受影响</text>
       </view>
       <view class="skin-grid">
         <view
@@ -104,11 +106,19 @@ function toggleEnabled() {
       draft.red = draft.yao = draft.erSan = draft.wu = true
     }
   }
+  persistSolo()
 }
 function toggleAcc(key) {
   if (readonly.value) return
   dirty = true
   draft[key] = !draft[key]
+  persistSolo()
+}
+
+// 单机即时持久化：单机模式无保存按钮（toggle 即存），点选直接落 storage，
+// useGame 开局读 dingniuzi_settings 才能拿到最新值。联网模式走「保存」按钮批量提交，不动它
+function persistSolo() {
+  if (!isNet.value) uni.setStorageSync('dingniuzi_settings', { ...draft })
 }
 
 // ---- 牌面样式：点选即存即生效（预览用真实 PlayingTile 传 skin prop，无需保存按钮） ----
