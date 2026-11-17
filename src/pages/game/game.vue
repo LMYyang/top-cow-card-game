@@ -538,13 +538,21 @@ watch(
 )
 onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2); clearTimeout(splashTimer3) })
 
-// 轮到我出牌提示音：myTurn false→true 且 PLAYING 且非扣牌回合才响（掷骰/结算/亮牌不响，扣牌回合不响）。
-// armed 吞首响：进局/重连瞬间本来正轮到我（armed 初始即 true，首次翻转被吞），
-// AI 先行等正常轮转首次翻转则放行。restart 走 redirectTo 重开页面，setup 重跑 armed 自然复位。
-const turnSoundArmed = ref(myTurn.value)
+// 轮到我出牌提示音：state 首次进入 PLAYING 时快照 myTurn（entryMyTurn）——进局瞬间本就轮到我
+// （solo 我先行 / net 重连正轮到我）时首次翻转是初始局面而非轮转，吞掉不响；
+// AI 先行等正常轮转首次翻转则放行。快照消费后复位，后续每次真轮转都响。
+// restart 走 redirectTo 重开页面，setup 重跑自然复位。mustDiscard（扣牌回合）不响。
+const entryMyTurn = ref(false)
+watch(
+  () => view.value.state,
+  (s, os) => {
+    if (s === 'PLAYING' && os !== 'PLAYING') entryMyTurn.value = myTurn.value
+  }
+)
 watch(myTurn, (v) => {
-  if (!v || mustDiscard.value || view.value.state !== 'PLAYING') return
-  if (!turnSoundArmed.value) { turnSoundArmed.value = true; return }
+  if (!v || view.value.state !== 'PLAYING') return
+  if (entryMyTurn.value) { entryMyTurn.value = false; return } // 先消费进局快照（含我先行/重连），再判扣牌
+  if (mustDiscard.value) return // 扣牌回合不提示（快照仍要消费，放上面）
   play('turn')
 })
 
