@@ -534,3 +534,99 @@ describe('settle 算账结算', () => {
     expect(result.ranks.find(r => r.seat === 0).role).toBe('输家')
   })
 })
+
+describe('死局自动结算（仅算账局：宣告后无人可接时免轮流扣牌）', () => {
+  /** 红账链局骨架：头牌 seat2 出红十建链 {top:6,bottom:4}；跟牌把红八/大天接上（端点不变或可控），
+   *  最后 seat1 红十接顶端（镜像暴露 4）→ 两端 {4,4} 冻结构成红账。 */
+  function setupFrozen() {
+    const g = createGame(mulberry32(42), 0, ACC_ON)
+    rollDice(g, 3) // 头牌 seat2
+    g.players[0].hand = [byId('t5-2'), byId('t1-2'), byId('t6-2'), byId('t10-2'), byId('t12-1'), byId('t11-2')]
+    g.players[1].hand = [byId('t4-2'), byId('t9-1'), byId('t9-2'), byId('t7-1'), byId('t7-2'), byId('t8-2')]
+    g.players[2].hand = [byId('t4-1'), byId('t2-1'), byId('t2-2'), byId('t3-1'), byId('t3-2'), byId('t8-1')]
+    g.players[3].hand = [byId('t5-1'), byId('t1-1'), byId('t6-1'), byId('t10-1'), byId('t13-1'), byId('t11-1')]
+    expect(play(g, 2, ['t4-1']).ok).toBe(true) // 建链 {top:6, bottom:4}
+    expect(play(g, 3, ['t5-1'], 'bottom').ok).toBe(true) // 红八 4/4 接底端，端点不变
+    expect(play(g, 0, ['t5-2'], 'bottom').ok).toBe(true)
+    expect(g.openEnds).toEqual({ top: 6, bottom: 4 })
+    return g
+  }
+
+  it('宣告后即无人可接（红八已全上链）：立即自动结算，余手全部记扣', () => {
+    const g = setupFrozen()
+    expect(g.state).toBe('PLAYING')
+    expect(play(g, 1, ['t4-2'], 'top', true).ok).toBe(true) // 红账宣告，两端 {4,4} 冻结
+    expect(g.account).toEqual({ seat: 1, type: '红账' })
+    // 四家余手均无 4 端牌 → 死局：跳过轮流扣牌直接结算
+    expect(g.state).toBe('SETTLE')
+    expect(g.players.every((p) => p.hand.length === 0)).toBe(true)
+    expect(g.players.every((p) => p.kept.length === 5)).toBe(true)
+    // 扣点：seat0=33 seat1=28 seat2=48 seat3=32 → 宣告者严格最小，红账成功翻倍
+    expect(g.result.account).toEqual({ seat: 1, type: '红账', success: true })
+    expect(g.result.winner).toBe(1)
+    expect(g.result.scores[1]).toBe(12)
+    // 亮牌数据：余手逐张记入 tableHistory（discarded 条目），亮牌阶段各区域才能翻出别家牌面
+    const discards = g.tableHistory.filter((e) => e.discarded)
+    expect(discards).toHaveLength(20) // 四家余手 5×4 张
+    for (const seat of [0, 1, 2, 3]) {
+      const seatIds = discards.filter((e) => e.seat === seat).map((e) => e.discarded.id).sort()
+      expect(seatIds).toEqual(g.players[seat].kept.map((t) => t.id).sort())
+    }
+    // viewOf 下发（单机/联网共用视图）：客户端亮牌阶段能取到各家牌面
+    const v = viewOf(g, 0)
+    expect(v.state).toBe('SETTLE')
+    expect(v.tableHistory.filter((e) => e.discarded)).toHaveLength(20)
+    expect(v.myKept).toHaveLength(5)
+    expect(v.opponents.every((o) => o.keptCount === 5 && o.handCount === 0)).toBe(true)
+    // 结算后动作一律被拒
+    expect(play(g, 2, ['t2-1']).ok).toBe(false)
+    expect(discard(g, 2, 't2-1').ok).toBe(false)
+  })
+
+  it('同样死局但无人宣告：不自动结算，继续轮流扣牌（AI 不点算账，按民间习惯走完）', () => {
+    const g = createGame(mulberry32(42), 0, ACC_ON)
+    rollDice(g, 3)
+    g.players[0].hand = [byId('t5-2'), byId('t1-2'), byId('t6-2'), byId('t10-2'), byId('t12-1'), byId('t11-2')]
+    g.players[1].hand = [byId('t4-2'), byId('t9-1'), byId('t9-2'), byId('t7-1'), byId('t7-2'), byId('t8-2')]
+    g.players[2].hand = [byId('t4-1'), byId('t2-1'), byId('t2-2'), byId('t3-1'), byId('t3-2'), byId('t8-1')]
+    g.players[3].hand = [byId('t5-1'), byId('t1-1'), byId('t6-1'), byId('t10-1'), byId('t13-1'), byId('t11-1')]
+    expect(play(g, 2, ['t4-1']).ok).toBe(true)
+    expect(play(g, 3, ['t5-1'], 'bottom').ok).toBe(true)
+    expect(play(g, 0, ['t5-2'], 'bottom').ok).toBe(true)
+    // 同样接法但 declare=false：两端 {4,4} 已冻结、四家均无可接牌，却无宣告 → 不触发自动结算
+    expect(play(g, 1, ['t4-2'], 'top', false).ok).toBe(true)
+    expect(g.account).toBe(null)
+    expect(g.state).toBe('PLAYING')
+    expect(g.players[2].hand.length).toBeGreaterThan(0) // 轮到 seat2 正常扣牌
+    expect(discard(g, 2, 't2-1').ok).toBe(true)
+    expect(g.state).toBe('PLAYING')
+  })
+
+  it('宣告后仍有人持红八可接：继续出牌，最后一张红八上链后才自动结算', () => {
+    const g = createGame(mulberry32(42), 0, ACC_ON)
+    rollDice(g, 3)
+    g.players[0].hand = [byId('t1-2'), byId('t6-2'), byId('t10-2'), byId('t12-1'), byId('t11-2'), byId('t8-2')]
+    g.players[1].hand = [byId('t4-2'), byId('t9-1'), byId('t9-2'), byId('t7-1'), byId('t7-2'), byId('t2-2')]
+    g.players[2].hand = [byId('t4-1'), byId('t3-1'), byId('t3-2'), byId('t8-1'), byId('t10-1'), byId('t2-1')]
+    g.players[3].hand = [byId('t5-1'), byId('t5-2'), byId('t1-1'), byId('t6-1'), byId('t13-1'), byId('t11-1')]
+    expect(play(g, 2, ['t4-1']).ok).toBe(true) // 建链 {6,4}
+    expect(play(g, 3, ['t5-1'], 'bottom').ok).toBe(true) // 红八接底端，端点不变
+    expect(play(g, 0, ['t1-2'], 'top').ok).toBe(true) // 大天 6/6 接顶端，端点不变
+    expect(play(g, 1, ['t4-2'], 'top', true).ok).toBe(true) // 红账宣告，两端 {4,4}
+    expect(g.account).toEqual({ seat: 1, type: '红账' })
+    // seat3 还持一张红八可接 → 不是死局，继续
+    expect(g.state).toBe('PLAYING')
+    // seat2 无牌可接，正常扣一张（死局前扣牌流程不受影响）
+    expect(discard(g, 2, 't3-1').ok).toBe(true)
+    expect(g.state).toBe('PLAYING')
+    // seat3 出最后一张红八 → 此后四家均无可接牌 → 自动结算
+    expect(play(g, 3, ['t5-2'], 'bottom').ok).toBe(true)
+    expect(g.state).toBe('SETTLE')
+    expect(g.players.every((p) => p.hand.length === 0)).toBe(true)
+    // 扣点：seat0=27 seat1=33 seat2=37 seat3=28 → 宣告者非最小，失败包庄
+    expect(g.result.account).toEqual({ seat: 1, type: '红账', success: false })
+    expect(g.result.winner).toBe(0)
+    expect(g.result.scores[1]).toBe(-12)
+    expect(g.result.scores[0]).toBe(12)
+  })
+})

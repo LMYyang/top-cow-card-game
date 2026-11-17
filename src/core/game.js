@@ -1,5 +1,5 @@
 import { dealGroups } from './deck.js'
-import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, nextOpenEnds, diceToSeatOffset, settle, canRedeal, declarationFor } from './rules.js'
+import { playableForLead, canFollowEnds, mustDiscardEnds, placeSides, nextOpenEnds, diceToSeatOffset, settle, canRedeal, declarationFor, playableTilesEnds } from './rules.js'
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings.js'
 
 /**
@@ -87,6 +87,24 @@ function advanceTurn(g) {
   do {
     g.currentSeat = (g.currentSeat + 1) % 4
   } while (g.players[g.currentSeat].hand.length === 0)
+  // 死局自动结算（仅算账局）：有人宣告算账（g.account）且链两端点全部「冻结」
+  // （该点数的所有竖牌都已上链）时，剩余手牌永远接不上任一端，剩下只会是各家轮流
+  // 扣牌的走过场——等价结局，直接把余手全部记扣、立即进入结算，省掉连续扣牌回合。
+  // 非算账局保持原流程（AI 不会点算账，按民间习惯走完扣牌）。
+  const ends = g.openEnds
+  if (ends && g.account && g.players.every((p) => playableTilesEnds(p.hand, ends).length === 0)) {
+    for (const p of g.players) {
+      // 余手逐张记扣，并同步写 tableHistory（discarded 条目）：亮牌阶段各区域靠扣牌历史
+      // 翻牌面，不写则自动结算进 kept 的别家余手在终局亮牌时看不到
+      for (const t of p.hand) {
+        p.kept.push(t)
+        g.tableHistory.push({ seat: p.seat, discarded: t })
+      }
+      p.hand = []
+    }
+    g.result = settle(g.players, g.leaderSeat, g.account)
+    g.state = 'SETTLE'
+  }
 }
 
 /** 某座位头牌首出的合法牌 id 数组（不拉三家约束） */

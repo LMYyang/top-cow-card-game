@@ -14,8 +14,9 @@
         (coverSupport ? ', viewport-fit=cover' : '') + '" />')
     </script>
     <title></title>
-    <!-- 空图标：项目无 favicon，显式声明空链接避免浏览器默认请求 /favicon.ico 报 404 -->
-    <link rel="icon" href="data:," />
+    <!-- 游戏图标：迷你骨牌（src/static/favicon.svg，构建时 uni 插件复制到 dist/build/h5/static/），
+         显式声明避免浏览器默认请求 /favicon.ico 报 404 -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <!--preload-links-->
     <!--app-context-->
   </head>

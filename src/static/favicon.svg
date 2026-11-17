@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 顶牛子 favicon：一张迷你骨牌（象牙底 + 红黑点），呼应游戏内 PlayingTile 牌面 -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5f0e1"/>
+      <stop offset="1" stop-color="#d8cfb8"/>
+    </linearGradient>
+  </defs>
+  <!-- 深木色底（牌桌色） -->
+  <rect width="64" height="64" rx="14" fill="#4a3418"/>
+  <!-- 牌面 -->
+  <rect x="10" y="6" width="44" height="52" rx="8" fill="url(#tile)"/>
+  <rect x="10" y="6" width="44" height="52" rx="8" fill="none" stroke="#b0a685" stroke-width="1.5"/>
+  <!-- 分隔线 -->
+  <line x1="16" y1="32" x2="48" y2="32" stroke="#b0a685" stroke-width="2"/>
+  <!-- 上半 6 点（大天风格：左列红） -->
+  <circle cx="21" cy="14" r="4" fill="#c0392b"/>
+  <circle cx="32" cy="14" r="4" fill="#1a1a1a"/>
+  <circle cx="43" cy="14" r="4" fill="#c0392b"/>
+  <circle cx="21" cy="23" r="4" fill="#c0392b"/>
+  <circle cx="32" cy="23" r="4" fill="#1a1a1a"/>
+  <circle cx="43" cy="23" r="4" fill="#c0392b"/>
+  <!-- 下半 1 点（红幺） -->
+  <circle cx="32" cy="45" r="5" fill="#c0392b"/>
+</svg>
