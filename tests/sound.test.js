@@ -1,0 +1,82 @@
+// tests/sound.test.js
+// uni 全局 mock：createInnerAudioContext 返回可断言的假实例；storage 用 vi.fn
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const ctxFactory = () => ({
+  src: '',
+  play: vi.fn(),
+  stop: vi.fn(),
+  onError: vi.fn(),
+})
+const ctxs = {}
+globalThis.uni = {
+  createInnerAudioContext: vi.fn(() => {
+    const c = ctxFactory()
+    ctxs[c.src] = c
+    return c
+  }),
+  getStorageSync: vi.fn(() => ''),
+  setStorageSync: vi.fn(),
+}
+
+import { useSound, _resetForTest } from '../src/composables/useSound.js'
+
+describe('useSound', () => {
+  beforeEach(() => {
+    _resetForTest()
+    vi.clearAllMocks()
+    globalThis.uni.getStorageSync.mockImplementation(() => '')
+  })
+
+  it('play 创建实例并播放，同名复用同一实例', () => {
+    const s = useSound()
+    // 两次 play 需间隔 >50ms 绕过节流（与下一用例的节流语义一致），断言保持不变
+    const now = vi.spyOn(Date, 'now')
+    now.mockReturnValue(1000)
+    s.play('tile-play')
+    now.mockReturnValue(1100)
+    s.play('tile-play')
+    now.mockRestore()
+    expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
+    const ctx = Object.values(ctxs)[0]
+    expect(ctx.src).toContain('/static/sounds/tile-play.wav')
+    expect(ctx.play).toHaveBeenCalledTimes(2)
+  })
+
+  it('防重入：同名 50ms 内重复调用被忽略', () => {
+    vi.useFakeTimers()
+    const s = useSound()
+    const now = vi.spyOn(Date, 'now')
+    now.mockReturnValue(1000)
+    s.play('reveal-flip')
+    now.mockReturnValue(1049) // 49ms 内
+    s.play('reveal-flip')
+    expect(Object.values(ctxs)[0].play).toHaveBeenCalledTimes(1)
+    now.mockReturnValue(1051) // 51ms，放行
+    s.play('reveal-flip')
+    expect(Object.values(ctxs)[0].play).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+    now.mockRestore()
+  })
+
+  it('静音：play 短路不创建实例、不播放', () => {
+    const s = useSound()
+    s.toggleMute()
+    expect(s.muted.value).toBe(true)
+    expect(uni.setStorageSync).toHaveBeenCalledWith('dingniuzi_muted', true)
+    s.play('dice-roll')
+    expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
+  })
+
+  it('静音持久化：storage 已存 true 时初始化即静音', () => {
+    globalThis.uni.getStorageSync.mockImplementation((k) => (k === 'dingniuzi_muted' ? true : ''))
+    const s = useSound()
+    expect(s.muted.value).toBe(true)
+  })
+
+  it('音频 API 异常被吞掉，不影响 play 返回', () => {
+    const s = useSound()
+    uni.createInnerAudioContext.mockImplementationOnce(() => { throw new Error('boom') })
+    expect(() => s.play('tile-play')).not.toThrow()
+  })
+})
