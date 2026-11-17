@@ -803,12 +803,9 @@ function confirmGoHome() {
   background: rgba(58, 44, 20, 0.85); color: #b0a685;
   border: 2rpx solid #5a4a32; border-radius: 999rpx;
 }
-/* 静音开关：与主菜单按钮并排（主菜单 fixed right:16rpx，本按钮在其左侧） */
+/* 静音开关：与主菜单按钮并排（主菜单 fixed right:16rpx，本按钮在其左侧不重叠处） */
 .btn-mute {
-  position: fixed; top: 16rpx; right: 128rpx; z-index: 50;
-  font-size: 24rpx; line-height: 1.4; padding: 10rpx 18rpx; margin: 0;
-  background: rgba(58, 44, 20, 0.85); color: #b0a685;
-  border: 2rpx solid #5a4a32; border-radius: 999rpx;
+  position: fixed; top: 16rpx; right: 160rpx; z-index: 50;
 }
 /* 左上角房间号徽标：不参与布局（fixed），与右侧主菜单按钮同风格 */
 .room-badge {
