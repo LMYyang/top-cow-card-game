@@ -542,6 +542,8 @@ onUnmounted(() => { clearTimeout(splashTimer1); clearTimeout(splashTimer2); clea
 // （solo 我先行 / net 重连正轮到我）时首次翻转是初始局面而非轮转，吞掉不响；
 // AI 先行等正常轮转首次翻转则放行。快照消费后复位，后续每次真轮转都响。
 // restart 走 redirectTo 重开页面，setup 重跑自然复位。mustDiscard（扣牌回合）不响。
+// 顺序约束：state watcher 必须建在 myTurn watcher 之前（同帧刷新时 Vue 按创建序执行，
+// 调换会导致 myTurn watcher 在快照赋值前先跑、进局误响）
 const entryMyTurn = ref(false)
 watch(
   () => view.value.state,
