@@ -18,7 +18,7 @@ export function _resetForTest() {
 
 const NAMES = [
   'click', 'shuffle', 'play_card', 'other_play', 'pass',
-  'suanzhang', 'win', 'lose', 'bgm',
+  'suanzhang', 'win', 'lose', 'bgm', 'turn',
 ]
 
 function getCtx(name) {

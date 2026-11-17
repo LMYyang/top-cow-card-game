@@ -108,4 +108,11 @@ describe('useSound', () => {
     s.play('not-a-sound')
     expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
   })
+
+  it('turn 音效已注册且可播', () => {
+    const s = useSound()
+    s.play('turn')
+    expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
+    expect(lastCtx.src).toContain('/static/sounds/turn.wav')
+  })
 })
