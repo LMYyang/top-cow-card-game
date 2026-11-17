@@ -19,13 +19,13 @@
             <button
               v-for="d in declarations" :key="d.type + d.side"
               class="btn-side btn-declare"
-              @click="$emit('declare', { id: t.id, side: d.side, type: d.type })"
+              @click="$emit('ui-click'); $emit('declare', { id: t.id, side: d.side, type: d.type })"
             >算{{ d.type.replace('账', '') }}账</button>
-            <button class="btn-side" @click="$emit('no-declare', { id: t.id })">不算账</button>
+            <button class="btn-side" @click="$emit('ui-click'); $emit('no-declare', { id: t.id })">不算账</button>
           </template>
           <template v-else>
-            <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'top' })">上端</button>
-            <button class="btn-side" @click="$emit('side-pick', { id: t.id, side: 'bottom' })">下端</button>
+            <button class="btn-side" @click="$emit('ui-click'); $emit('side-pick', { id: t.id, side: 'top' })">上端</button>
+            <button class="btn-side" @click="$emit('ui-click'); $emit('side-pick', { id: t.id, side: 'bottom' })">下端</button>
           </template>
         </view>
         <PlayingTile
@@ -50,8 +50,8 @@
     <view class="actions" v-if="myTurn">
       <view class="btn-row">
         <!-- 该牌上下端都可接且两端点数不同：必须先点"上端/下端"选端（点选端即出牌），出牌按钮禁用防误触默认端 -->
-        <button class="btn-primary" :disabled="!selectedId || mustDiscard || bothEnds" @click="$emit('confirm-play')">出牌</button>
-        <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('confirm-discard')">扣牌</button>
+        <button class="btn-primary" :disabled="!selectedId || mustDiscard || bothEnds" @click="$emit('ui-click'); $emit('confirm-play')">出牌</button>
+        <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('ui-click'); $emit('confirm-discard')">扣牌</button>
       </view>
     </view>
   </view>
@@ -78,7 +78,7 @@ const props = defineProps({
   isLeader: { type: Boolean, default: false }, // 我是头牌（与各家 OpponentZone 的 👑 标记一致）
   declarations: { type: Array, default: () => [] }, // [{ type, side }] 选中牌的可宣告项
 })
-const emit = defineEmits(['select', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick', 'declare', 'no-declare'])
+const emit = defineEmits(['select', 'ui-click', 'confirm-play', 'confirm-discard', 'choose-side', 'side-pick', 'declare', 'no-declare'])
 
 /** 双击快速出牌：仅当该牌无需选端（唯一可接端 / 链两端同点 / 首出）时生效，需选端时仍走"选中→选端→出牌"流程 */
 let lastTapId = null
@@ -90,6 +90,7 @@ function onTileTap(id) {
   lastTapTime = now
   emit('select', id)
   if (isDoubleTap && props.myTurn && !props.mustDiscard && !bothEnds.value && !props.declarations.length) {
+    emit('ui-click') // 双击快速出牌同样给按钮点击音
     emit('confirm-play')
   }
 }

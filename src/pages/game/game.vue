@@ -4,7 +4,7 @@
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
-    <button class="btn-home" @click.stop="confirmGoHome">‹ 主菜单</button>
+    <button class="btn-home" @click.stop="play('click'); confirmGoHome">‹ 主菜单</button>
     <button class="btn-home btn-mute" @click.stop="toggleMute">{{ muted ? '🔇' : '🔊' }}</button>
     <!-- 联网模式房间号：左上角小徽标（不遮牌面） -->
     <view v-if="isNet && roomNum" class="room-badge">房间 {{ roomNum }}</view>
@@ -27,7 +27,7 @@
           <view v-if="leaderRevealed" class="dice-result">{{ diceResultText }}</view>
           <!-- 掷骰权在我时才显示按钮；他人掷骰时到点自动掷，仅显示状态文案（solo: 0=我；net: 服务器 rollerSeat）。
                落定（fx.dice 有值）后隐藏按钮，避免落定→揭示头牌间隙按钮复活被重复点击；重开发牌由 resetDiceUi 清 fx.dice 后恢复 -->
-          <button v-else-if="diceRollerSeat === mySeatVal && !fx.dice" class="btn-primary" :disabled="fx.diceRolling" @click="play('dice-roll'); roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
+          <button v-else-if="diceRollerSeat === mySeatVal && !fx.dice" class="btn-primary" :disabled="fx.diceRolling" @click="play('click'); roll()">{{ fx.diceRolling ? '掷骰中…' : '掷骰定头牌' }}</button>
           <view v-else class="turn-hint">{{ labelOf(diceRollerSeat) }}掷骰中…</view>
         </template>
         <template v-else-if="view.state === 'PLAYING'">
@@ -38,7 +38,7 @@
             {{ turnText }}
           </view>
           <!-- 申请重新发牌：发牌后、首出前且我满足牌型时显示（solo/net 双模式） -->
-          <button v-if="canRedealNow" class="btn-primary btn-redeal" :disabled="redealBusy" @click="onRedeal">申请重新发牌</button>
+          <button v-if="canRedealNow" class="btn-primary btn-redeal" :disabled="redealBusy" @click="play('click'); onRedeal">申请重新发牌</button>
         </template>
         <template v-else-if="view.state === 'SETTLE'">
           <!-- 终局最后一张也要飞：latest-hidden 必须传，否则状态翻 SETTLE 时此分支重新挂载
@@ -71,6 +71,7 @@
         :is-leader="view.leaderSeat === mySeatVal"
         :declarations="myDeclarations"
         @select="selectedId = $event"
+        @ui-click="play('click')"
         @choose-side="mySide = $event"
         @side-pick="onSidePick"
         @declare="onDeclare"
@@ -126,8 +127,8 @@
           </text>
         </view>
         <view class="settle-actions">
-          <button class="btn-primary" @click="restart">再来一局</button>
-          <button class="btn-secondary" @click="goHome">回主菜单</button>
+          <button class="btn-primary" @click="play('click'); restart">再来一局</button>
+          <button class="btn-secondary" @click="play('click'); goHome">回主菜单</button>
         </view>
       </view>
     </view>
@@ -138,8 +139,8 @@
         <text class="settle-title">返回主菜单</text>
         <text class="home-confirm-text">{{ homeConfirmText }}</text>
         <view class="settle-actions">
-          <button class="btn-primary" @click="goHome">退出</button>
-          <button class="btn-secondary" @click="homeConfirmShow = false">继续玩</button>
+          <button class="btn-primary" @click="play('click'); goHome">退出</button>
+          <button class="btn-secondary" @click="play('click'); homeConfirmShow = false">继续玩</button>
         </view>
       </view>
     </view>
@@ -167,7 +168,12 @@ import { sharedNet } from '../../utils/net.js'
  * 全部绑定走 computed 代理 + 空对象兜底（gameApi 就绪前模板已在渲染）；
  * solo 的 view/fx 为 reactive 对象、net 的 myTurn 等为 computed，isRef 区分后统一解包。
  */
-const { play, muted, toggleMute } = useSound()
+const { play, muted, toggleMute, startBgm, stopBgm } = useSound()
+// 局内背景音乐：进 game 页起播（循环，useSound 内 muted 时不起播），离页停止；
+// 解除静音时恢复播放（muted watch；开静音由 useSound.toggleMute 内部自动停）
+if (muted.value === false) startBgm()
+watch(muted, (m) => { if (m === false) startBgm() })
+onUnmounted(() => stopBgm())
 const isNet = ref(false)
 const gameApi = ref(null)
 onLoad((query) => {
@@ -250,7 +256,7 @@ async function myPlay(tileId, side) {
 }
 async function myDiscard(tileId) {
   const res = await gameApi.value?.myDiscard(tileId)
-  if (res?.ok) { selectedId.value = null; play('tile-discard') }
+  if (res?.ok) { selectedId.value = null; play('pass') }
   else {
     uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
     if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
@@ -345,6 +351,8 @@ watch(
     if (rolling) {
       diceLanded.value = false
       leaderRevealed.value = false
+      // 摇骰即洗牌音（开局发牌的哗啦声覆盖摇骰动画段）
+      play('shuffle')
       // 动画期间每 80ms 随机换一个骰面，模拟翻滚
       diceFaceTimer = setInterval(() => {
         randomFace.value = 1 + Math.floor(Math.random() * 6)
@@ -352,7 +360,7 @@ watch(
     } else {
       if (diceFaceTimer) { clearInterval(diceFaceTimer); diceFaceTimer = null }
       if (!fx.value.dice) return // 非落定（如重置），不进入揭示流程
-      play('dice-land')
+      play('click') // 骰子落定：轻点一声收尾（旧 dice-land 已移除，click 音量小不抢戏）
       // 落定：先复位 class 以便重复触发回弹动画
       diceLanded.value = false
       requestAnimationFrame(() => {
@@ -535,7 +543,7 @@ const tableShake = ref(false)
 let splashTimer3 = null
 watch(accountSlammed, (v) => {
   if (!v) return
-  play('account-slam')
+  play('suanzhang')
   tableShake.value = false
   requestAnimationFrame(() => {
     requestAnimationFrame(() => { tableShake.value = true })
@@ -670,7 +678,8 @@ function playFly(entry) {
     fly.moving = false
     latestHidden.value = false
     flyLanded.value = true // 落地：放行终局亮牌/结算
-    play('tile-play')
+    // 按出牌方分流：自己出牌"咔哒"更响（灵魂音），别家略小（同形异幅）
+    play(entry.seat === mySeatVal.value ? 'play_card' : 'other_play')
   }, 950)
 }
 onUnmounted(() => clearTimeout(flyTimer))
@@ -681,12 +690,12 @@ onUnmounted(() => clearTimeout(settlePaceTimer))
 function paceSettle() {
   clearTimeout(settlePaceTimer)
   settleBrief.value = true
-  // 结算音：以我的积分为准（正=赢 上扬琶音/负=输 下坠音/无 winner 缺失=中性单音）。
-  // winner 是"最小扣点者"，平局/我没赢时它不等于"我赢"，故以 s>0 为主判据
+  // 结算音：以我的积分为准（正=赢 轻快喜庆/负=输 低沉柔和）。
+  // winner 恒存在（settle 保证），极端缺失时按输音兜底（低沉音不闹心）
   const r = view.value.result
   const s = r?.scores?.[mySeatVal.value] || 0
-  play(r?.winner === undefined || r?.winner === null ? 'settle-draw' : s > 0 ? 'settle-win' : 'settle-lose')
-  settlePaceTimer = setTimeout(() => { fx.value.revealKept = true; play('reveal-flip') }, 1000)
+  play(s > 0 ? 'win' : 'lose')
+  settlePaceTimer = setTimeout(() => { fx.value.revealKept = true }, 1000)
 }
 
 /** 监听桌面历史：出现新出牌条目即起飞克隆牌（扣牌条目不飞）。solo 与 net 共用（数据源都是 tableHistory）。

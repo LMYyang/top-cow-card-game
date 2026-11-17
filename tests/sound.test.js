@@ -4,8 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const ctxFactory = () => ({
   src: '',
-  play: vi.fn(),
-  stop: vi.fn(),
+  loop: false,
+  paused: true,
+  play: vi.fn(function () { this.paused = false }),
+  stop: vi.fn(function () { this.paused = true }),
   onError: vi.fn(),
 })
 let lastCtx = null // 最新创建的音频实例（工厂返回后 useSound 才设 src，故用引用而非 src 键注册）
@@ -33,12 +35,12 @@ describe('useSound', () => {
     // 两次 play 需间隔 >50ms 绕过节流（与下一用例的节流语义一致），断言保持不变
     const now = vi.spyOn(Date, 'now')
     now.mockReturnValue(1000)
-    s.play('tile-play')
+    s.play('play_card')
     now.mockReturnValue(1100)
-    s.play('tile-play')
+    s.play('play_card')
     now.mockRestore()
     expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
-    expect(lastCtx.src).toContain('/static/sounds/tile-play.wav')
+    expect(lastCtx.src).toContain('/static/sounds/play_card.wav')
     expect(lastCtx.play).toHaveBeenCalledTimes(2)
   })
 
@@ -46,12 +48,12 @@ describe('useSound', () => {
     const s = useSound()
     const now = vi.spyOn(Date, 'now')
     now.mockReturnValue(1000)
-    s.play('reveal-flip')
+    s.play('click')
     now.mockReturnValue(1049) // 49ms 内
-    s.play('reveal-flip')
+    s.play('click')
     expect(lastCtx.play).toHaveBeenCalledTimes(1)
     now.mockReturnValue(1051) // 51ms，放行
-    s.play('reveal-flip')
+    s.play('click')
     expect(lastCtx.play).toHaveBeenCalledTimes(2)
     now.mockRestore()
   })
@@ -61,7 +63,7 @@ describe('useSound', () => {
     s.toggleMute()
     expect(s.muted.value).toBe(true)
     expect(uni.setStorageSync).toHaveBeenCalledWith('dingniuzi_muted', true)
-    s.play('dice-roll')
+    s.play('click')
     expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
   })
 
@@ -74,6 +76,36 @@ describe('useSound', () => {
   it('音频 API 异常被吞掉，不影响 play 返回', () => {
     const s = useSound()
     uni.createInnerAudioContext.mockImplementationOnce(() => { throw new Error('boom') })
-    expect(() => s.play('tile-play')).not.toThrow()
+    expect(() => s.play('play_card')).not.toThrow()
+  })
+
+  it('bgm：startBgm 循环实例播放、重复 start 不重播、stopBgm 停止', () => {
+    const s = useSound()
+    s.startBgm()
+    expect(lastCtx.loop).toBe(true) // bgm 实例带循环标记
+    expect(lastCtx.src).toContain('/static/sounds/bgm.wav')
+    expect(lastCtx.play).toHaveBeenCalledTimes(1)
+    s.startBgm() // 已在播（paused=false）不重复 play
+    expect(lastCtx.play).toHaveBeenCalledTimes(1)
+    s.stopBgm()
+    expect(lastCtx.stop).toHaveBeenCalled()
+  })
+
+  it('bgm：muted 时 startBgm 不播；toggleMute 开静音自动停 bgm', () => {
+    const s = useSound()
+    s.toggleMute() // 开静音
+    s.startBgm()
+    expect(uni.createInnerAudioContext).not.toHaveBeenCalled() // 静音下连实例都不建
+    s.toggleMute() // 解除静音
+    s.startBgm()
+    expect(lastCtx.play).toHaveBeenCalledTimes(1)
+    s.toggleMute() // 再开静音：自动停 bgm
+    expect(lastCtx.stop).toHaveBeenCalled()
+  })
+
+  it('play 不接受未知音效名（防御拼写错误）', () => {
+    const s = useSound()
+    s.play('not-a-sound')
+    expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
   })
 })
