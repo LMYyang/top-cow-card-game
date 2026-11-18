@@ -18,7 +18,7 @@
             <text class="row-title">{{ acc.label }}</text>
             <text class="row-sub">{{ acc.desc }}</text>
           </view>
-          <view class="checkbox" :class="{ on: draft[acc.key] }">✓</view>
+          <view class="checkbox" :class="{ on: draft[acc.key], disabled: readonly }">✓</view>
         </view>
       </template>
     </view>
@@ -166,11 +166,17 @@ function back() {
 .row-sub { font-size: 22rpx; color: #b0a685; line-height: 1.4; }
 .switch { width: 84rpx; height: 44rpx; border-radius: 999rpx; background: #3a2c14; border: 2rpx solid #5a4a32; position: relative; transition: background 0.2s; flex: none; }
 .switch.on { background: #c9a227; border-color: #c9a227; }
+/* 只读态（联网非房主）：整体降透明度示意不可操作，点击已被 toggle 函数守卫拦截 */
+.switch.disabled, .checkbox.disabled { opacity: 0.45; }
 .switch .knob { position: absolute; top: 2rpx; left: 2rpx; width: 36rpx; height: 36rpx; border-radius: 50%; background: #f5f0e1; transition: left 0.2s; }
 .switch.on .knob { left: 42rpx; }
 .checkbox { width: 44rpx; height: 44rpx; border-radius: 8rpx; border: 2rpx solid #8a7040; color: transparent; display: flex; align-items: center; justify-content: center; font-size: 28rpx; flex: none; box-sizing: border-box; }
 .checkbox.on { background: #c9a227; border-color: #c9a227; color: #fff; }
-.actions { display: flex; flex-direction: column; gap: 20rpx; margin-top: 16rpx; }
+/* 保存/返回同一行：flex 横排等宽（uni-app button 默认块级竖排，须显式开 flex） */
+.actions { display: flex; flex-direction: row; gap: 20rpx; margin-top: 16rpx; }
+.actions .btn-primary, .actions .btn-secondary { flex: 1; padding: 18rpx 0; margin: 0; }
+/* 单机模式无保存按钮时返回独占一行，保持居中等宽观感 */
+.actions .btn-secondary:only-child { flex: 1; }
 .readonly-hint { text-align: center; font-size: 22rpx; color: #b0a685; }
 /* 牌面样式选择 */
 .skin-card { gap: 16rpx; padding: 24rpx; }

@@ -42,8 +42,14 @@
       </view>
     </view>
     <view class="actions">
-      <!-- 对局设置：房主可改（net 设置页），非房主只读查看；显示当前算账摘要 -->
-      <button class="btn-secondary" @click="openSettings">对局设置：{{ settingsSummary }}</button>
+    <!-- 对局设置拆两行：标题行（纯展示+箭头示意可进入）与算账摘要行；整体仍可点击进入设置页 -->
+    <view class="settings-entry" @click="openSettings">
+      <view class="settings-title-row">
+        <text class="settings-title">对局设置</text>
+        <text class="settings-arrow">›</text>
+      </view>
+      <text class="settings-summary">算账：{{ settingsSummaryShort }}</text>
+    </view>
       <button v-if="isHost" class="btn-primary start-btn" :disabled="!canStart" @click="start">{{ startHint }}</button>
       <button v-if="myMember && !isHost && !myMember.ready && !roomSettling" class="btn-secondary" @click="setReady(true)">准备</button>
       <button v-else-if="myMember && !isHost && (myMember.ready || roomSettling)" class="btn-secondary" @click="setReady(false)">取消准备</button>
@@ -135,12 +141,12 @@ const startHint = computed(() => {
 const seatReadyText = (m) =>
   m.isAI ? '' : roomSettling.value && !m.settled ? '结算中' : m.ready ? '已准备' : '未准备'
 
-// 对局设置摘要：未启用算账显示「不玩算账」，否则列出勾选的账种
-const settingsSummary = computed(() => {
+// 对局设置摘要：未启用算账显示「不玩」，否则列出勾选的账种（标题行「对局设置」与摘要行分开显示）
+const settingsSummaryShort = computed(() => {
   const s = room.value?.settings
-  if (!s || !s.enabled) return '不玩算账'
-  const on = [s.red && '红', s.yao && '幺', s.erSan && '三二', s.wu && '五'].filter(Boolean)
-  return `算账：${on.join('/') || '无账种'}`
+  if (!s || !s.enabled) return '不玩'
+  const on = [s.red && '红', s.yao && '幺', s.erSan && '二三', s.wu && '五'].filter(Boolean)
+  return on.join(' / ') || '无账种'
 })
 
 function openSettings() {
@@ -297,8 +303,10 @@ onUnmounted(() => { offRoom?.(); offStart?.(); offKicked?.(); offPoke?.() })
 .head { display: flex; flex-direction: column; align-items: center; gap: 8rpx; }
 .room-id { font-size: 56rpx; font-weight: bold; color: #c9a227; letter-spacing: 8rpx; }
 .hint { font-size: 24rpx; color: #b0a685; }
-.seats { display: flex; flex-wrap: wrap; gap: 20rpx; justify-content: center; }
-.seat { position: relative; width: 300rpx; padding: 28rpx 24rpx; border-radius: 16rpx; background: rgba(58, 44, 20, 0.5); border: 2rpx solid #5a4a32; display: flex; flex-direction: column; gap: 8rpx; }
+/* 座位区固定两行两列：grid 强制每行 2 格（旧 flex-wrap 在手机上因座位实宽 300+48rpx padding
+   超过半屏宽度而退化成每行 1 个、4 座竖排） */
+.seats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20rpx; width: 100%; max-width: 700rpx; }
+.seat { position: relative; box-sizing: border-box; padding: 28rpx 24rpx; border-radius: 16rpx; background: rgba(58, 44, 20, 0.5); border: 2rpx solid #5a4a32; display: flex; flex-direction: column; gap: 8rpx; }
 .seat.me { border-color: #c9a227; }
 .seat.host { border-color: #c9a227; border-width: 4rpx; background: linear-gradient(160deg, rgba(120, 88, 26, 0.55), rgba(58, 44, 20, 0.5)); box-shadow: 0 0 16rpx rgba(201, 162, 39, 0.35); }
 .seat.host .seat-name { color: #c9a227; }
@@ -316,6 +324,17 @@ onUnmounted(() => { offRoom?.(); offStart?.(); offKicked?.(); offPoke?.() })
 .seat-status-row { display: flex; align-items: center; gap: 12rpx; }
 .seat-poke { margin-left: auto; font-size: 22rpx; color: #c9a227; padding: 2rpx 12rpx; border: 2rpx solid #c9a227; border-radius: 999rpx; flex: none; }
 .actions { display: flex; flex-direction: column; align-items: center; gap: 20rpx; width: 100%; max-width: 560rpx; margin-top: 20rpx; }
+/* 对局设置入口卡：标题行（对局设置 + 右箭头）与算账摘要行两行显示，整体可点进设置页 */
+.settings-entry {
+  width: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 10rpx;
+  padding: 24rpx 28rpx;
+  background: #5a4a32; border: 2rpx solid #5a4a32; border-radius: 24rpx;
+}
+.settings-title-row { display: flex; align-items: center; justify-content: space-between; }
+.settings-title { font-size: 30rpx; color: #f5f0e1; font-weight: bold; }
+.settings-arrow { font-size: 32rpx; color: #b0a685; line-height: 1; }
+.settings-summary { font-size: 26rpx; color: #b0a685; }
 .start-btn { width: auto; min-width: 0; padding: 18rpx 64rpx; font-size: 32rpx; white-space: nowrap; line-height: 1.4; }
 .btn-leave { background: transparent; color: #b0a685; border: 2rpx solid #5a4a32; }
 .poke-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 99; }
