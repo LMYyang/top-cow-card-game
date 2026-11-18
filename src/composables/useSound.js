@@ -25,7 +25,10 @@ function getCtx(name) {
   if (!ctxPool) ctxPool = {}
   if (!ctxPool[name]) {
     const ctx = uni.createInnerAudioContext()
-    ctx.src = `/static/sounds/${name}.wav` // H5 相对根路径，与 favicon 引用一致
+    // bgm/play_card/win 用 mp3（体积小）；其余音效用 wav
+    ctx.src = ['bgm', 'play_card', 'win'].includes(name)
+      ? `/static/sounds/${name}.mp3`
+      : `/static/sounds/${name}.wav`
     if (name === 'bgm') ctx.loop = true // 背景音乐循环
     ctx.onError?.(() => {}) // 吞错误：音频失败静默
     ctxPool[name] = ctx

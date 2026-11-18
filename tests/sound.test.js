@@ -40,7 +40,7 @@ describe('useSound', () => {
     s.play('play_card')
     now.mockRestore()
     expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
-    expect(lastCtx.src).toContain('/static/sounds/play_card.wav')
+    expect(lastCtx.src).toContain('/static/sounds/play_card.mp3')
     expect(lastCtx.play).toHaveBeenCalledTimes(2)
   })
 
@@ -83,7 +83,7 @@ describe('useSound', () => {
     const s = useSound()
     s.startBgm()
     expect(lastCtx.loop).toBe(true) // bgm 实例带循环标记
-    expect(lastCtx.src).toContain('/static/sounds/bgm.wav')
+    expect(lastCtx.src).toContain('/static/sounds/bgm.mp3')
     expect(lastCtx.play).toHaveBeenCalledTimes(1)
     s.startBgm() // 已在播（paused=false）不重复 play
     expect(lastCtx.play).toHaveBeenCalledTimes(1)
