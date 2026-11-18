@@ -13,7 +13,8 @@
     <view v-if="mustDiscard" class="hint warn">无牌可接，请选一张扣下</view>
     <view class="hand">
       <view v-for="t in hand" :key="t.id" class="tile-wrap">
-        <!-- 选中牌的悬浮按钮：可宣告时显示「算X账/不算账」，否则两端皆可接时显示「上端/下端」 -->
+        <!-- 选中牌的悬浮按钮：可宣告时显示「算X账/不算账」，否则两端皆可接时显示「上端/下端」；
+             两端都构成账（2 个宣告项）时无"普通端"可走，不显示「不算账」 -->
         <view v-if="t.id === selectedId && myTurn && !mustDiscard && (declarations.length || bothEnds)" class="side-float">
           <template v-if="declarations.length">
             <button
@@ -21,7 +22,7 @@
               class="btn-side btn-declare"
               @click="$emit('ui-click'); $emit('declare', { id: t.id, side: d.side, type: d.type })"
             >算{{ d.type.replace('账', '') }}账</button>
-            <button class="btn-side" @click="$emit('ui-click'); $emit('no-declare', { id: t.id })">不算账</button>
+            <button v-if="declarations.length === 1" class="btn-side" @click="$emit('ui-click'); $emit('no-declare', { id: t.id })">不算账</button>
           </template>
           <template v-else>
             <button class="btn-side" @click="$emit('ui-click'); $emit('side-pick', { id: t.id, side: 'top' })">上端</button>
