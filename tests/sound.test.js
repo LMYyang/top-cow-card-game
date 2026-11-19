@@ -79,11 +79,12 @@ describe('useSound', () => {
     expect(() => s.play('play_card')).not.toThrow()
   })
 
-  it('bgm：startBgm 循环实例播放、重复 start 不重播、stopBgm 停止', () => {
+  it('bgm：startBgm 循环实例播放（bgm/ 目录随机选曲）、重复 start 不重播、stopBgm 停止', () => {
     const s = useSound()
     s.startBgm()
     expect(lastCtx.loop).toBe(true) // bgm 实例带循环标记
-    expect(lastCtx.src).toContain('/static/sounds/bgm.mp3')
+    expect(lastCtx.src).toContain('/static/sounds/bgm/') // bgm 从 bgm/ 目录取（随机选一）
+    expect(lastCtx.src).toMatch(/\.mp3$/)
     expect(lastCtx.play).toHaveBeenCalledTimes(1)
     s.startBgm() // 已在播（paused=false）不重复 play
     expect(lastCtx.play).toHaveBeenCalledTimes(1)
@@ -114,5 +115,34 @@ describe('useSound', () => {
     s.play('turn')
     expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
     expect(lastCtx.src).toContain('/static/sounds/turn.wav')
+  })
+
+  it('出牌语音：按牌名播 card/ 下对应 mp3；未知牌名静默', () => {
+    const s = useSound()
+    s.playCardVoice('红十')
+    expect(lastCtx.src).toContain('/static/sounds/card/hongShi.mp3')
+    s.playCardVoice('不存在的牌')
+    // 未知牌名不创建新实例（仍只有红十这一次）
+    expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
+  })
+
+  it('算账宣告语音：playCardVoice(name, true) 播 suanzhang_voice，不读牌名', () => {
+    const s = useSound()
+    s.playCardVoice('红十', true)
+    expect(lastCtx.src).toContain('/static/sounds/suanzhang_voice.mp3')
+  })
+
+  it('扣牌语音：playWithholdVoice 播 withhold/ 目录 mp3', () => {
+    const s = useSound()
+    s.playWithholdVoice()
+    expect(lastCtx.src).toMatch(/^\/static\/sounds\/withhold\/\w+\.mp3$/)
+  })
+
+  it('语音静音短路：muted 时不播语音', () => {
+    const s = useSound()
+    s.toggleMute()
+    s.playCardVoice('红十')
+    s.playWithholdVoice()
+    expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
   })
 })

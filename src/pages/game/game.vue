@@ -168,7 +168,7 @@ import { sharedNet } from '../../utils/net.js'
  * 全部绑定走 computed 代理 + 空对象兜底（gameApi 就绪前模板已在渲染）；
  * solo 的 view/fx 为 reactive 对象、net 的 myTurn 等为 computed，isRef 区分后统一解包。
  */
-const { play, muted, toggleMute, startBgm, stopBgm } = useSound()
+const { play, muted, toggleMute, startBgm, stopBgm, playCardVoice, playWithholdVoice } = useSound()
 // 局内背景音乐：进 game 页起播（循环，useSound 内 muted 时不起播），离页停止；
 // 解除静音时恢复播放（muted watch；开静音由 useSound.toggleMute 内部自动停）
 if (muted.value === false) startBgm()
@@ -256,7 +256,7 @@ async function myPlay(tileId, side) {
 }
 async function myDiscard(tileId) {
   const res = await gameApi.value?.myDiscard(tileId)
-  if (res?.ok) { selectedId.value = null; play('pass') }
+  if (res?.ok) { selectedId.value = null; play('pass'); playWithholdVoice() }
   else {
     uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
     if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
@@ -721,6 +721,12 @@ function paceSettle() {
 /** 监听桌面历史：出现新出牌条目即起飞克隆牌（扣牌条目不飞）。solo 与 net 共用（数据源都是 tableHistory）。
  *  终局条目（state 已翻 SETTLE）也要飞：最后一张牌先落桌、落地后再进入亮牌/结算，
  *  否则牌还在手里游戏就结束了（终局时 latestId 的金圈/链端徽章等随 SETTLE 模板一并渲染，不受影响） */
+// 语音播报（与特效共用本 watcher，solo/net 数据源一致）：
+// - 出牌条目：宣告算账的条目播「算账」人声（不读牌名，避免两句语音叠在一起），
+//   其余按最后入链的牌名播 card/ 下对应语音（红八双出只读末张，与飞牌同源）；
+// - 扣牌条目：随机播 withhold/ 下一条（「要不起/过」等）。
+// 播报时机跟飞牌落点解耦：语音在牌离手即响（tableHistory 一变就播），飞牌动画照旧。
+// 重连快照：watcher 只在长度增长时触发，快照重放不会重复播报。
 watch(
   () => view.value.tableHistory.length,
   (n, old) => {
@@ -732,6 +738,12 @@ watch(
       // 扣牌条目（无 tiles）不隐藏——扣牌不进时间线，无需动画
       latestHidden.value = true
       playFly(entry)
+      // 宣告算账的出牌：g.account 在 play() 内随本条目写入（solo 同步/net 推送都已就位），
+      // 本条目出牌者 = account.seat 即宣告成立 → 播「算账」不读牌名
+      const acc = view.value.account
+      playCardVoice(entry.tiles[entry.tiles.length - 1].name, !!acc && acc.seat === entry.seat)
+    } else if (entry?.discarded) {
+      playWithholdVoice()
     }
   }
 )
