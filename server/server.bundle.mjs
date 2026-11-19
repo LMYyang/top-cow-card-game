@@ -4896,7 +4896,7 @@ var RoomManager = class {
     if (!member || !member.isAI && !member.aiTimer)
       return;
     const isLead = g.openEnds === null;
-    const delay = isLead ? 3e3 + Math.floor(Math.random() * 1e3) : 2e3 + Math.floor(Math.random() * 1e3);
+    const delay = isLead ? 1800 + Math.floor(Math.random() * 700) : 1200 + Math.floor(Math.random() * 700);
     const t = setTimeout(() => {
       room.timers.delete(t);
       if (room.game !== g || g.state !== "PLAYING" || g.currentSeat !== seat)

@@ -149,7 +149,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onUnmounted, isRef } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow, onReady } from '@dcloudio/uni-app'
 import OpponentZone from '../../components/OpponentZone.vue'
 import CenterArea from '../../components/CenterArea.vue'
 import HandArea from '../../components/HandArea.vue'
@@ -169,11 +169,14 @@ import { sharedNet } from '../../utils/net.js'
  * solo 的 view/fx 为 reactive 对象、net 的 myTurn 等为 computed，isRef 区分后统一解包。
  */
 const { play, muted, toggleMute, startBgm, stopBgm, playCardVoice, playWithholdVoice } = useSound()
-// 局内背景音乐：进 game 页起播（循环，useSound 内 muted 时不起播），离页停止；
-// 解除静音时恢复播放（muted watch；开静音由 useSound.toggleMute 内部自动停）
-if (muted.value === false) startBgm()
-watch(muted, (m) => { if (m === false) startBgm() })
+// 局内背景音乐：离页停止；解除静音时恢复播放（muted watch；开静音由 useSound.toggleMute 内部自动停）。
+// 首播不放在 setup 同步执行：redirectTo 重建本页时（再来一局），新页 setup 先跑、
+// 旧页组件卸载后跑（KeepAlive post 队列），旧页的 stopBgm 会把 setup 里刚起播的 BGM 停掉，
+// 恢复播放又脱离用户激活窗口被浏览器自动播放策略拒绝 → 整局无声。
+// onReady 晚于旧页卸载完成，此时起播不会被旧页的清理打断。
 onUnmounted(() => stopBgm())
+watch(muted, (m) => { if (m === false) startBgm() })
+onReady(() => { if (muted.value === false) startBgm() })
 const isNet = ref(false)
 const gameApi = ref(null)
 onLoad((query) => {

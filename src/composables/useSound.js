@@ -36,8 +36,8 @@ const WITHHOLD_VOICES = ['kouYiZhang', 'shuiLe', 'yaoBuQi', 'guo']
 const ACCOUNT_VOICE = 'suanzhang_voice'
 // bgm 候选（bgm/ 目录序号文件，随机选一循环；增删曲目只需改此清单）
 const BGM_TRACKS = ['05', '20', '27', '32', '50', '54']
-// bgm 音量：源文件响度不一，统一压到 0.15 做垫底衬乐，不盖过出牌/语音等前景音
-const BGM_VOLUME = 0.15
+// bgm 音量：源文件响度不一，统一压到 0.2 做垫底衬乐，不盖过出牌/语音等前景音
+const BGM_VOLUME = 0.2
 
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)]
@@ -113,7 +113,8 @@ export function useSound() {
   }
 
   /** 起播背景音乐（循环）。muted 时不起播；已在播则不重复触发。
-   *  每次进入对局随机选一首（bgm/ 目录序号曲目），选定后保持不变（stop→start 同曲续播语义） */
+   *  每次进入对局随机选一首（bgm/ 目录序号曲目），选定后保持不变（stop→start 同曲续播语义）。
+   *  调用时机由页面层保证在旧页卸载之后（onReady），避免旧页 stopBgm 把新局 BGM 停掉 */
   function startBgm() {
     if (muted.value) return
     try {
