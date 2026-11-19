@@ -214,9 +214,9 @@ export function useGame() {
     const seat = view.currentSeat
     const isLead = g.openEnds === null
     // AI 头牌首出延时放宽：给真人留出阅读手牌/考虑申请重发的时间
-    // 跟牌延时也放宽（1.2~1.8s）：出牌语音播报约 1s，间隔太短时下一家的语音会顶掉上一家
+    // 跟牌延时也放宽：出牌语音播报约 1s，间隔太短时下一家的语音会顶掉上一家
     // （语音通道独占，新播报 stop 旧播报），听得见播报优先于出牌速度
-    const delay = isLead ? 2000 + Math.floor(Math.random() * 800) : 1200 + Math.floor(Math.random() * 600)
+    const delay = isLead ? 3000 + Math.floor(Math.random() * 1000) : 2000 + Math.floor(Math.random() * 1000)
     setTimeout(() => {
       if (g.state !== 'PLAYING' || g.currentSeat !== seat) return
       const hand = g.players[seat].hand

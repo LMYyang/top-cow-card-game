@@ -20,7 +20,7 @@ export function _resetForTest() {
 
 const NAMES = [
   'click', 'shuffle', 'play_card', 'other_play', 'pass',
-  'suanzhang', 'win', 'lose', 'bgm', 'turn',
+  'suanzhang', 'win', 'lose', 'turn',
 ]
 
 // ---- 语音资源清单（人声播报，文件在 static/sounds/ 下，构建时随 static 目录整体复制） ----
@@ -34,8 +34,10 @@ const CARD_VOICES = {
 const WITHHOLD_VOICES = ['kouYiZhang', 'shuiLe', 'yaoBuQi', 'guo']
 // 算账宣告语音
 const ACCOUNT_VOICE = 'suanzhang_voice'
-// bgm 候选（bgm/ 目录，随机选一循环）
-const BGM_TRACKS = ['bgm']
+// bgm 候选（bgm/ 目录序号文件，随机选一循环；增删曲目只需改此清单）
+const BGM_TRACKS = ['05', '20', '27', '32', '50', '54']
+// bgm 音量：源文件响度不一，统一压到 0.15 做垫底衬乐，不盖过出牌/语音等前景音
+const BGM_VOLUME = 0.15
 
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)]
@@ -45,16 +47,19 @@ function getCtx(name) {
   if (!ctxPool) ctxPool = {}
   if (!ctxPool[name]) {
     const ctx = uni.createInnerAudioContext()
-    // 固定音效：bgm/play_card/win 用 mp3（体积小）；其余音效用 wav
+    // 固定音效：play_card/win 用 mp3（体积小）；其余音效用 wav
     // 语音（card_/wh_/bgm_ 前缀）：mp3，路径由 name 直接携带
     if (name.startsWith('card_')) ctx.src = `/static/sounds/card/${name.slice(5)}.mp3`
     else if (name.startsWith('wh_')) ctx.src = `/static/sounds/withhold/${name.slice(3)}.mp3`
     else if (name.startsWith('bgm_')) ctx.src = `/static/sounds/bgm/${name.slice(4)}.mp3`
     else if (name === 'voice_account') ctx.src = `/static/sounds/${ACCOUNT_VOICE}.mp3`
-    else ctx.src = ['bgm', 'play_card', 'win'].includes(name)
+    else ctx.src = ['play_card', 'win'].includes(name)
       ? `/static/sounds/${name}.mp3`
       : `/static/sounds/${name}.wav`
-    if (name === 'bgm' || name.startsWith('bgm_')) ctx.loop = true // 背景音乐循环
+    if (name.startsWith('bgm_')) {
+      ctx.loop = true // 背景音乐循环
+      ctx.volume = BGM_VOLUME // 统一压低：源文件响度不一，防止盖过前景音
+    }
     ctx.onError?.(() => {}) // 吞错误：音频失败静默
     ctxPool[name] = ctx
   }
@@ -108,7 +113,7 @@ export function useSound() {
   }
 
   /** 起播背景音乐（循环）。muted 时不起播；已在播则不重复触发。
-   *  每次进入对局随机选一首（bgm/ 目录），选定后保持不变（stop→start 同曲续播语义） */
+   *  每次进入对局随机选一首（bgm/ 目录序号曲目），选定后保持不变（stop→start 同曲续播语义） */
   function startBgm() {
     if (muted.value) return
     try {
@@ -122,7 +127,7 @@ export function useSound() {
   function stopBgm() {
     if (!ctxPool) return
     for (const k of Object.keys(ctxPool)) {
-      if (k === 'bgm' || k.startsWith('bgm_')) {
+      if (k.startsWith('bgm_')) {
         try { ctxPool[k].stop?.() } catch { /* 静默 */ }
       }
     }

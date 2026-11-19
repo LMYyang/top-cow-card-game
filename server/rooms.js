@@ -553,7 +553,7 @@ export class RoomManager {
     const member = room.members.find((m) => m.seat === seat)
     if (!member || (!member.isAI && !member.aiTimer)) return // 真人在位，等待其动作
     const isLead = g.openEnds === null
-    const delay = isLead ? 2000 + Math.floor(Math.random() * 800) : 600 + Math.floor(Math.random() * 400)
+    const delay = isLead ? 3000 + Math.floor(Math.random() * 1000) : 2000 + Math.floor(Math.random() * 1000)
     const t = setTimeout(() => {
       room.timers.delete(t)
       if (room.game !== g || g.state !== 'PLAYING' || g.currentSeat !== seat) return

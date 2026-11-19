@@ -256,7 +256,9 @@ async function myPlay(tileId, side) {
 }
 async function myDiscard(tileId) {
   const res = await gameApi.value?.myDiscard(tileId)
-  if (res?.ok) { selectedId.value = null; play('pass'); playWithholdVoice() }
+  // 成功后不在此播音：tableHistory watcher 对扣牌条目统一播 withhold 语音（我/AI、solo/net 一致），
+  // 这里再播会双音（pass+语音 与 watcher 的语音重叠）
+  if (res?.ok) { selectedId.value = null }
   else {
     uni.showToast({ title: res?.reason || '扣牌失败', icon: 'none' })
     if (isNet.value) netRoomGoneRedirect(res?.code) // 房间已被服务器销毁：跳回大厅
