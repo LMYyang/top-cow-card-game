@@ -8,7 +8,6 @@
 //   shuffle    开局洗牌发牌                骨牌哗啦、木牌洗牌声
 //   play_card  自己出牌（顶牌）链条接上    木质骨牌"咔哒"（灵魂音）
 //   other_play 别家出牌                    与 play_card 接近、音量略小
-//   pass       无牌可接扣牌                低沉闷一声，不刺耳
 //   suanzhang  触发算账（封三家）          高亮提示音，比出牌醒目
 //   win        本局你赢                    轻快喜庆短音
 //   lose       本局你输                    低沉柔和，不闹心
@@ -174,15 +173,7 @@ const sounds = {}
   mix(out, tone(880, 700, 0.05, 0.02, 0.22 * 0.65), 0.004)
   sounds.other_play = out
 }
-// 5. pass：低沉闷一声——低通很重的敲击，不刺耳（~0.18s）
-{
-  const out = silence(0.16)
-  const r = rng(31)
-  mix(out, tone(180, 110, 0.12, 0.05, 0.65))
-  mix(out, noiseBurst(0.04, 0.015, 0.28, 0.12, r)) // 很闷的噪声
-  sounds.pass = out
-}
-// 6. suanzhang：高亮提示音——明亮双音上行 + 高频闪光（~0.5s，比出牌醒目）
+// 5. suanzhang：高亮提示音——明亮双音上行 + 高频闪光（~0.5s，比出牌醒目）
 {
   const out = silence(0.55)
   mix(out, pluck(587.33, 0.18, 0.85, rng(31))) // D5
