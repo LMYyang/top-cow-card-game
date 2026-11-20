@@ -1,6 +1,5 @@
-// src/core/settings.js
 /** 算账设置（单机本地存储与联网房间共用形态）。
- *  enabled: 算账总开关；red/yao/erSan/wu: 红/幺/三二/五账种分别勾选 */
+ *  enabled: 算账总开关；red/yao/erSan/wu: 红/幺/二三/五账种分别勾选 */
 
 export const DEFAULT_SETTINGS = { enabled: false, red: true, yao: true, erSan: true, wu: true }
 

@@ -95,8 +95,6 @@ export function seatName(offset) {
  * @param account 本局算账宣告 { seat, type }；无宣告传 null/缺省（行为与旧版一致）
  * @returns {{ winner: number, ranks: [{seat, points, role}], scores: {seat: number}, account: {seat, type, success}|null }}
  * role: '赢家'|'大庄'|'二庄'|'小庄'
- * 有宣告时：宣告者扣点严格小于其余三家最小扣点 → 成功（全体分数翻倍 12/-6/-4/-2）；
- * 否则失败：宣告者包庄 -12，赢家 +12，另两输家 0。
  */
 export function settle(players, leaderSeat, account = null) {
   const info = players.map((p) => ({
@@ -147,12 +145,10 @@ export function settle(players, leaderSeat, account = null) {
       }
     }
     // 失败（含平点）：宣告者包庄 -12，赢家 +12，另两输家 0。
-    // 宣告者未严格最小即算输——即使平点靠首出序本可当 round 赢家也不算赢；
-    // 赢家取其余三家中扣点最小者（同点按离头牌近者，四家净手时即头牌下家）。
+    // 赢家取其余三家中扣点最小者（同点按离头牌近者）。
     const winSeat = info
       .filter((i) => i.seat !== account.seat)
       .sort((a, b) => a.points - b.points || leadDist(a.seat) - leadDist(b.seat))[0].seat
-    // 角色口径：赢家=其余三家中最优者，宣告者改标「输家」，其余两家无庄位概念（role 置空）
     for (const r of ranks) {
       if (r.seat === winSeat) r.role = '赢家'
       else if (r.seat === account.seat) r.role = '输家'
@@ -198,7 +194,7 @@ export function canRedeal(hand) {
 // ---------- 算账（封账）宣告 ----------
 
 /** 账种定义：冻结端组合 → 账种名。key = 排序后的两端点数字串。
- *  二三账有两种冻结形态：2,3（4 张触发牌中 3 张已上链、接活端暴露另一端）与 1,2（带 1 竖牌全上链后接 3 端暴露 1）。 */
+ *  二三账有两种冻结形态：2,3 与 1,2。 */
 const ACCOUNT_TYPES = {
   '4,4': '红账',
   '1,1': '幺账',
@@ -232,14 +228,13 @@ function endFrozen(p, afterChain) {
  */
 export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
   if (!settings || !settings.enabled || !openEnds) return []
-  // 算账只能由竖牌触发：横牌（如红八 4|4）即使拼出冻结端组合也不算账
+  // 算账只能由竖牌触发
   if (tile.type !== '竖牌') return []
   const sides = placeSides(tile, openEnds)
   if (sides.length === 0) return []
   const afterChain = [...chainTiles, tile]
   const opts = []
   for (const { side, mirrored } of sides) {
-    // 复用 play 的新端计算
     const newEnds = nextOpenEnds(openEnds, tile, side, mirrored)
     const key = [newEnds.top, newEnds.bottom].sort((a, b) => a - b).join(',')
     const type = ACCOUNT_TYPES[key]
@@ -247,7 +242,7 @@ export function declarationFor(tile, openEnds, chainTiles, hand, settings) {
     if (!endFrozen(newEnds.top, afterChain) || !endFrozen(newEnds.bottom, afterChain)) continue
     if (!settings[ACCOUNT_KEY[type]]) continue
     if (type === '二三账') {
-      // 特殊条件：手里除这张牌外还有其他可接牌（故意不出别的偏选这张）
+      // 手里除这张牌外还有其他可接牌（故意不出别的偏选这张）
       const others = hand.filter((t) => t.id !== tile.id)
       if (!playableTilesEnds(others, openEnds).length) continue
     }

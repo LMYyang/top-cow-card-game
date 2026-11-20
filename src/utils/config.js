@@ -1,7 +1,5 @@
-// 服务器地址配置：
-// - 构建注入优先（前端与 ws 分开部署时用）：环境变量 VITE_WS_URL，如 wss://dingniuzi-ws.onrender.com
-// - https 页面（Render 单服务部署）：wss + 同主机，经平台 TLS 反代连到同端口的 ws 服务
-// - 本地开发（http）：同主机 + wsPort（根目录 config.json 是端口唯一配置源，与 server 共用）
+// 服务器地址：VITE_WS_URL 构建注入优先（前后端分开部署）；https 页面用 wss+同主机；
+// 本地开发（http）用同主机 + config.json 的 wsPort（与 server 共用）
 import wsPort from '../../config.json'
 
 const host = typeof location !== 'undefined' ? location.hostname : '127.0.0.1'

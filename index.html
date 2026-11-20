@@ -2,9 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- 本游戏为深色木纹牌桌 + 象牙牌面主题，不支持深色模式：
-         声明 light 可防止手机浏览器（如 Chrome 安卓版"强制深色"）自动反色，
-         否则米白牌面被反转成深色、黑点数看不清 -->
+    <!-- 声明 light 防止手机浏览器自动反色（深色主题游戏） -->
     <meta name="color-scheme" content="light" />
     <script>
       var coverSupport = 'CSS' in window && typeof CSS.supports === 'function' && (CSS.supports('top: env(a)') ||
@@ -14,8 +12,7 @@
         (coverSupport ? ', viewport-fit=cover' : '') + '" />')
     </script>
     <title></title>
-    <!-- 游戏图标：迷你骨牌（src/static/favicon.svg，构建时 uni 插件复制到 dist/build/h5/static/），
-         显式声明避免浏览器默认请求 /favicon.ico 报 404 -->
+    <!-- 显式声明避免浏览器默认请求 /favicon.ico 报 404 -->
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
     <!--preload-links-->
     <!--app-context-->

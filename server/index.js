@@ -9,33 +9,30 @@ import { readPort } from './port.js'
 /**
  * 顶牛子联网对战服务器。
  * createServerApp(port, opts) 返回 { httpServer, wss, port, mgr }，便于测试用随机端口与短心跳。
- * node index.js 直接启动（端口见根目录 config.json 的 wsPort，PORT 环境变量可覆盖）。
  */
 
-const HEARTBEAT_MS = 15_000 // 心跳周期：连续两轮（~30s）ping 无回应判定死链
+const HEARTBEAT_MS = 15_000
 
 export function createServerApp(port = readPort(), { heartbeatMs = HEARTBEAT_MS } = {}) {
   const mgr = new RoomManager()
-  // 同端口托管 H5 静态构建产物（dist/build/h5）：单服务部署到 Render 时前端 + ws 共用一个端口。
-  // 目录不存在（纯后端部署/本地只跑 ws）时退回 426，行为与原先一致。
+  // 同端口托管 H5 静态构建产物（dist/build/h5）；目录不存在时退回 426
   const staticDir = process.env.STATIC_DIR
     ? path.resolve(process.env.STATIC_DIR)
     : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist/build/h5')
   let staticReady = null
   const httpServer = createServer(async (req, res) => {
     try {
-      // 只允许 GET 的静态读取，路径限制在 staticDir 内（防 ../ 目录穿越）
       const url = new URL(req.url, 'http://localhost')
       let pathname = decodeURIComponent(url.pathname)
-      if (pathname.includes('..')) { res.writeHead(403).end(); return }
+      if (pathname.includes('..')) { res.writeHead(403).end(); return } // 防目录穿越
       if (pathname === '/') pathname = '/index.html'
       const file = path.join(staticDir, pathname)
       if (!file.startsWith(staticDir)) { res.writeHead(403).end(); return }
-      staticReady ||= fs.readdir(staticDir).then(() => true, () => false) // 首次探测产物是否存在
+      staticReady ||= fs.readdir(staticDir).then(() => true, () => false)
       if (!(await staticReady)) { res.writeHead(426).end('WebSocket only'); return }
       const data = await fs.readFile(file).catch(() => null)
       if (data === null) {
-        // SPA 路由回退：非资源路径一律回 index.html（hash 路由其实用不到，防御性兜底）
+        // SPA 路由回退：非资源路径一律回 index.html
         const index = await fs.readFile(path.join(staticDir, 'index.html')).catch(() => null)
         if (index === null) { res.writeHead(404).end('Not Found'); return }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(index)
@@ -49,29 +46,26 @@ export function createServerApp(port = readPort(), { heartbeatMs = HEARTBEAT_MS 
       res.writeHead(500).end()
     }
   })
-  const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 }) // 限制单帧大小，防恶意大帧
+  const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 })
 
   wss.on('connection', (socket) => {
-    // 连接级包装：send 支持对象并自动 JSON；close 幂等
     const conn = {
       raw: socket,
-      token: null, // 认证后由路由写入（room.* 成功响应或 reconnect）
-      alive: true, // 心跳标记：每轮 ping 前置 false，收到 pong（或任何帧）置 true
+      token: null, // 认证后由路由写入
+      alive: true,
       send(obj) { if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(obj)) },
       close() { try { socket.close() } catch { /* noop */ } },
     }
-    // 收帧异常（非 mask 帧/非法 UTF-8/超 maxPayload）会 emit 'error'，无监听会 uncaughtException 崩服
+    // 收帧异常无监听会 uncaughtException 崩服
     socket.on('error', (err) => console.error('[server] socket error:', err.message))
-    // 半开连接检测：客户端断网/杀进程时 TCP 不会发 FIN，socket 'close' 永不触发，
-    // 成员 connected 恒为 true → WAITING 房永远不被清理（房间里僵尸占位、列表一直展示）。
-    // 服务端周期 ping，两轮无 pong 视为死链 terminate()，触发 onConnClose 走正常断线清理。
+    // 半开连接检测：周期 ping，两轮无 pong 视为死链 terminate()，触发 onConnClose 走断线清理
     socket.on('pong', () => { conn.alive = true })
-    socket.on('message', () => { conn.alive = true }) // 有任何业务帧也算活着
+    socket.on('message', () => { conn.alive = true })
     const beat = setInterval(() => {
       if (socket.readyState !== socket.OPEN) { clearInterval(beat); return }
       if (!conn.alive) {
         clearInterval(beat)
-        socket.terminate() // 触发 'close' → mgr.onConnClose(conn)
+        socket.terminate()
         return
       }
       conn.alive = false
@@ -91,7 +85,6 @@ export function createServerApp(port = readPort(), { heartbeatMs = HEARTBEAT_MS 
       try {
         handle(mgr, conn, msg)
       } catch (e) {
-        // 防御性兜底：任何处理异常不至崩服
         conn.send({ type: 'error', payload: { code: 'INTERNAL', message: '服务器内部错误' } })
         console.error('[server] handle error:', e)
       }
@@ -113,7 +106,6 @@ function handle(mgr, conn, msg) {
 
   switch (type) {
     case 'room.list': {
-      // 大厅房间列表：无需入房身份，任何人可查（只含未开局、有真人在线、未满员的房）
       return reply('room.list.ok', { rooms: mgr.listRooms() })
     }
     case 'room.create': {
@@ -137,7 +129,7 @@ function handle(mgr, conn, msg) {
       return reply('room.joined', { room: mgr.roomState(room), token, yourSeat: seat })
     }
     case 'room.seat': {
-      // 协议约定 room.seat 只带 { seat }：房间由 token 反查（payload.roomId 不存在，Number(undefined)=NaN 会导致误判 ROOM_GONE）
+      // 房间由 token 反查（payload 无 roomId）
       const room = mgr.roomOf(conn.token)
       if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
       const res = mgr.moveSeat(conn.token, room.roomId, Number(payload.seat))
@@ -145,7 +137,6 @@ function handle(mgr, conn, msg) {
       return reply('room.seat.ok', {})
     }
     case 'room.ready': {
-      // 同 room.seat：房间由 token 反查
       const room = mgr.roomOf(conn.token)
       if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
       const res = mgr.setReady(conn.token, room.roomId, !!payload.ready)
@@ -153,7 +144,6 @@ function handle(mgr, conn, msg) {
       return reply('room.ready.ok', {})
     }
     case 'room.kick': {
-      // 房主踢人：目标由 payload.token 指定（被踢方凭 token 索引移除，房主身份服务端校验）
       const room = mgr.roomOf(conn.token)
       if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
       const res = mgr.kickMember(conn.token, room.roomId, String(payload.token || ''))
@@ -161,7 +151,6 @@ function handle(mgr, conn, msg) {
       return reply('room.kick.ok', {})
     }
     case 'room.poke': {
-      // 房主提醒未准备玩家：目标由 payload.token 指定
       const room = mgr.roomOf(conn.token)
       if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
       const res = mgr.pokeMember(conn.token, room.roomId, String(payload.token || ''))
@@ -169,14 +158,13 @@ function handle(mgr, conn, msg) {
       return reply('room.poke.ok', {})
     }
     case 'room.leave': {
-      // 先回执再离开：对局中 leave 会关闭连接，后发回执将永远无法送达
+      // 先回执再离开：对局中 leave 会关闭连接，后发回执无法送达
       reply('room.left', {})
       mgr.leave(conn.token)
       conn.token = null
       return
     }
     case 'room.setSettings': {
-      // 房主修改算账设置（仅 WAITING 阶段）：房间由 token 反查，随 room.state 广播
       const room = mgr.roomOf(conn.token)
       if (!room) return replyError('NOT_IN_ROOM', '不在此房间')
       const res = mgr.setRoomSettings(conn.token, room.roomId, payload.settings)
@@ -199,25 +187,24 @@ function handle(mgr, conn, msg) {
       return reply('action.ok', {})
     }
     case 'session.check': {
-      // 会话预检（大厅用）：本地存有 token 时查询是否有可恢复的房（对局中宽限期内）
       const found = mgr.checkSession(String(payload.token || ''))
       return reply('session.check.ok', { session: found })
     }
     case 'reconnect': {
       const reqToken = String(payload.token || '')
-      if (conn.token && conn.token !== reqToken) mgr.leave(conn.token) // 跨房重连：先按旧 token 退出旧房（WAITING 移除；对局中按断线宽限处理）
+      if (conn.token && conn.token !== reqToken) mgr.leave(conn.token) // 跨房重连：先退出旧房
       const res = mgr.reconnect(conn, reqToken)
       if (res.error) return replyError(res.error.code, res.error.message)
       conn.token = reqToken
       return reply('reconnected', { room: mgr.roomState(res.room), yourSeat: res.seat })
     }
     default:
-      return replyError('UNKNOWN_TYPE', '未知消息类型') // 不回显原始 type，防注入/反射
+      return replyError('UNKNOWN_TYPE', '未知消息类型')
   }
 }
 
 function sanitizeName(name) {
-  // 先剔除控制字符与 RTL 覆写字符（可被用于日志/界面欺骗），再截断
+  // 剔除控制字符与 RTL 覆写字符（防日志/界面欺骗），再截断
   const s = String(name ?? '').replace(/[\u0000-\u001f\u202a-\u202e]/g, '').trim().slice(0, 12)
   return s || '玩家'
 }

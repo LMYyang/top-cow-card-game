@@ -1,9 +1,5 @@
-// src/core/tileSkins.js
 /** 牌面样式（皮肤）定义与本地存储。
- *  牌面渲染点阵（pips.js）不变，皮肤只换外观：牌身材质/底色、分隔线、点色、牌背。
- *  纯本地偏好：只影响本端渲染，其他玩家看到的是各自的样式（没设过则是默认 classic）。
- *  设置入口仅主菜单「游戏设置」（联网房间设置页不展示），存 dingniuzi_skin，
- *  不进算账 settings、不联服务器。 */
+ *  皮肤只换外观，不改变牌面点阵渲染；纯本地偏好，存 dingniuzi_skin，不进算账 settings。 */
 
 export const STORAGE_KEY = 'dingniuzi_skin'
 

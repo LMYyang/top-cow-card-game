@@ -1,4 +1,3 @@
-<!-- src/pages/index/index.vue -->
 <template>
   <view class="menu">
     <view class="logo-area">
@@ -34,19 +33,19 @@
       </view>
     </view>
 
-    <!-- 历史记录弹框：点统计卡「单机/联网」区域打开，展示对应模式的历史记录 -->
+    <!-- 历史记录弹框：点统计卡「单机/联网」区域打开 -->
     <view v-if="historyOpen" class="settle-overlay" @click="historyOpen = false">
       <view class="history-modal" @click.stop>
         <view class="modal-header">
           <text class="modal-title" :class="{ net: historyMode === 'net' }">{{ historyMode === 'net' ? '联网对战' : '单机对战' }}</text>
           <text class="modal-close" @click="historyOpen = false">✕</text>
         </view>
-        <!-- 联网模式页签：场次汇总（按房间统计总积分）与逐局记录分开查看 -->
+        <!-- 联网页签：场次汇总与逐局记录分开查看 -->
         <view v-if="historyMode === 'net'" class="net-tabs">
           <text class="net-tab" :class="{ on: netTab === 'sessions' }" @click="switchNetTab('sessions')">场次积分</text>
           <text class="net-tab" :class="{ on: netTab === 'rounds' }" @click="switchNetTab('rounds')">逐局记录</text>
         </view>
-        <!-- 页签一：场次汇总（仅联网）：同房多局按 roomId 归成一场，统计每人总积分——朋友局终了对账用 -->
+        <!-- 页签一：场次汇总（仅联网）：同房多局按 roomId 归成一场，朋友局终了对账用 -->
         <view v-if="historyMode === 'net' && netTab === 'sessions'" class="history-list session-list">
           <view v-if="netSessions.length === 0" class="history-empty">还没有场次记录</view>
           <view v-for="s in netSessions" :key="s.roomId ?? 'legacy'" class="session-card" @click="toggleExpand('s' + (s.roomId ?? 'legacy'))">
@@ -72,7 +71,7 @@
             class="history-item"
             @click="toggleExpand(i)"
           >
-            <!-- 点击处理只在父级 .history-item 上：这里若再绑 @click 会因事件冒泡触发两次 toggle（展开又立刻收起） -->
+            <!-- 点击处理只在父级 .history-item 上，避免事件冒泡触发两次 toggle -->
             <view class="item-head">
               <text class="item-time">{{ formatTime(h.time) }}</text>
               <text class="item-expand">{{ expandedIdx === i ? '收起 ▲' : '展开 ▼' }}</text>
@@ -92,7 +91,7 @@
                   <text class="d-name">{{ labelOf(h, seat) }}</text>
                   <text class="d-role">{{ h.roles[seat] }}</text>
                 </view>
-                <!-- 扣点列：扣点在上，算账徽章挂在扣点下方（仅宣告座位行有） -->
+                <!-- 算账徽章挂在扣点下方（仅宣告座位行有） -->
                 <view class="d-points">
                   <text>扣 {{ h.points[seat] }} 点</text>
                   <text v-if="h.account && h.account.seat === seat" class="d-account" :class="{ fail: !h.account.success }">
@@ -128,7 +127,7 @@ const demoTile1 = { id: 'd1', name: '大天', a: 6, b: 6 }
 const demoTile2 = { id: 'd2', name: '地幺', a: 1, b: 1 }
 
 const statsRaw = ref(uni.getStorageSync('dingniuzi_stats') || { rounds: 0, totalScore: 0 })
-// 历史记录按模式拆分统计：单机看 dingniuzi_stats（只含单机局），联网从历史条目汇总
+// 单机看 dingniuzi_stats（只含单机局），联网从历史条目汇总
 const historyRaw = ref(uni.getStorageSync('dingniuzi_history') || [])
 const history = computed(() => historyRaw.value)
 const soloStats = computed(() => statsRaw.value)
@@ -140,20 +139,18 @@ const netStats = computed(() => {
   }
 })
 const historyOpen = ref(false)
-const historyMode = ref('solo') // 弹框当前展示的模式：'solo' | 'net'
-const expandedIdx = ref(-1) // 弹框内展开的条目下标，-1 = 全部收起
+const historyMode = ref('solo')
+const expandedIdx = ref(-1) // -1 = 全部收起
 
-// 弹框按模式过滤历史（时间正序存储，最新在前已由写入方保证）
 const modeHistory = computed(() =>
   history.value.filter((h) => (historyMode.value === 'net' ? h.mode === 'net' : h.mode !== 'net'))
 )
 
-// ---- 联网场次汇总：按 roomId 把同房多局归成一场，统计每人总积分 ----
-// 数据口径：scores/roomId 服务器统一裁决、全端一致（朋友间可对账）；names 为本端视角快照。
+// ---- 联网场次汇总：按 roomId 归场，统计每人总积分 ----
 // 老版本条目无 roomId（null）：单独归「早期对局」组，不与新版场次混算。
 const netSessions = computed(() => {
   const netEntries = history.value.filter((h) => h.mode === 'net')
-  const groups = new Map() // key → { roomId, entries[] }
+  const groups = new Map()
   for (const h of netEntries) {
     const key = h.roomId ?? 'legacy'
     if (!groups.has(key)) groups.set(key, { roomId: h.roomId ?? null, entries: [] })
@@ -161,7 +158,7 @@ const netSessions = computed(() => {
   }
   return [...groups.values()]
     .map(({ roomId, entries }) => {
-      // 局数与每人总积分；昵称取该场最新一局的 names（座位→人中途可能因掉线重进而变化）
+      // 昵称取该场最新一局的 names（座位→人中途可能因掉线重进而变化）
       const bySeat = {}
       for (const h of entries) {
         for (const seat of [0, 1, 2, 3]) {
@@ -171,31 +168,29 @@ const netSessions = computed(() => {
       const names = entries[0]?.names || {}
       const players = [0, 1, 2, 3]
         .map((seat) => ({ seat, name: names[seat] || `座位${seat}`, total: bySeat[seat] || 0 }))
-        .sort((a, b) => b.total - a.total) // 总分高在前
+        .sort((a, b) => b.total - a.total)
       return {
         roomId,
         rounds: entries.length,
-        lastTime: entries[0]?.time || 0, // 条目最新在前，取首条
+        lastTime: entries[0]?.time || 0,
         players,
       }
     })
-    .sort((a, b) => b.lastTime - a.lastTime) // 场次按最近对局时间新→旧
+    .sort((a, b) => b.lastTime - a.lastTime)
 })
-/** 汇总累加小助手（避免 reduce 嵌套难读） */
 function totalSeat(map, seat, delta) {
   map[seat] = (map[seat] || 0) + delta
 }
 
-/** 点统计卡「单机/联网」区域：打开对应模式的历史弹框（每次打开重置展开与页码） */
+/** 打开对应模式的历史弹框（每次打开重置展开与页码） */
 function openHistory(mode) {
   historyMode.value = mode
-  netTab.value = 'sessions' // 联网默认看场次积分（对账是高频诉求），单机无页签不受影响
+  netTab.value = 'sessions' // 联网默认看场次积分（对账是高频诉求）
   expandedIdx.value = -1
   page.value = 1
   historyOpen.value = true
 }
 
-// 联网弹框页签：'sessions' 场次积分汇总 | 'rounds' 逐局记录
 const netTab = ref('sessions')
 function switchNetTab(tab) {
   netTab.value = tab
@@ -215,7 +210,7 @@ function toggleExpand(idx) {
 }
 
 const SEAT_LABELS = ['我', '下家', '对家', '上家']
-/** 条目视角称呼：单机固定四家称呼；联网显示本端记录的座位→昵称快照（h.names），缺失时退化为「座位N」 */
+/** 条目视角称呼：单机固定四家称呼；联网显示本端记录的昵称快照，缺失时退化为「座位N」 */
 const labelOf = (h, seat) => {
   if (h.mode === 'net') return (h.names && h.names[seat]) || `座位${seat}`
   return SEAT_LABELS[seat] || `座位${seat}`
@@ -227,10 +222,8 @@ function formatTime(ts) {
   return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-// 打完一局返回主菜单时刷新战绩与历史（navigateBack 复用页面实例，setup 不会重跑）。
-// backfillNetStats：首次运行时把修复前混进 dingniuzi_stats 的联网局一次性剔除（历史只留 50 条，
-// 早期联网局若已被截断清掉则无法精确还原，以剩余历史为准做一次性修正）；
-// 之后 dingniuzi_stats 本就是纯单机口径（每局 solo +1，net 局从不写入），直接展示即可
+// 打完一局返回主菜单时刷新（navigateBack 复用页面实例，setup 不会重跑）。
+// backfillNetStats 首次运行时把修复前混进 dingniuzi_stats 的联网局一次性剔除
 onShow(() => {
   statsRaw.value = backfillNetStats()
   historyRaw.value = uni.getStorageSync('dingniuzi_history') || []
@@ -272,7 +265,7 @@ function openSettings() {
   background: rgba(58, 44, 20, 0.6); border: 2rpx solid #5a4a32;
   min-width: 440rpx;
 }
-/* 双模式统计：单机 | 联网 左右并排 */
+/* 单机 | 联网 左右并排 */
 .stats-cols { display: flex; align-items: stretch; gap: 32rpx; }
 .stats-block { display: flex; flex-direction: column; align-items: center; gap: 8rpx; min-width: 160rpx; }
 .stats-divider { width: 2rpx; background: #5a4a32; }
@@ -312,14 +305,14 @@ function openSettings() {
 
 /* 历史列表（弹框内） */
 .history-list { display: flex; flex-direction: column; gap: 12rpx; overflow-y: auto; }
-/* 联网弹框页签：场次积分 / 逐局记录 两个独立列表的切换 */
+/* 联网页签：场次积分 / 逐局记录 */
 .net-tabs { display: flex; gap: 12rpx; }
 .net-tab {
   flex: 1; text-align: center; padding: 12rpx 0; border-radius: 10rpx;
   font-size: 26rpx; color: #b0a685; background: rgba(58, 44, 20, 0.4); border: 2rpx solid #4a3c22;
 }
 .net-tab.on { color: #c9a227; border-color: #c9a227; background: rgba(201, 162, 39, 0.14); font-weight: bold; }
-/* 场次汇总（仅联网弹框）：同房多局一场一卡 */
+/* 场次汇总：同房多局一场一卡 */
 .session-list { display: flex; flex-direction: column; gap: 12rpx; }
 .session-card {
   padding: 16rpx 24rpx; border-radius: 12rpx;
@@ -342,7 +335,7 @@ function openSettings() {
 }
 .item-head { display: flex; align-items: center; gap: 16rpx; }
 .item-time { font-size: 24rpx; color: #b0a685; flex: 1; }
-/* 展开/分数列固定宽+右对齐：各条目纵向对齐（分数位数不同时不互相挤动） */
+/* 展开/分数列固定宽+右对齐：各条目纵向对齐 */
 .item-expand { font-size: 20rpx; color: #8a7d5c; width: 104rpx; text-align: right; }
 .item-my-score { font-size: 28rpx; font-weight: bold; color: #c9a227; width: 88rpx; text-align: right; }
 .item-my-score.negative { color: #a04030; }
@@ -354,7 +347,7 @@ function openSettings() {
 .d-name { font-size: 22rpx; color: #f5f0e1; width: 120rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .d-role { font-size: 20rpx; color: #b0a685; }
 .d-points { font-size: 22rpx; color: #b0a685; flex: 1; display: flex; flex-direction: column; gap: 4rpx; align-items: center; }
-/* 账目徽章：药丸样式，挂在宣告座位扣点下方（随扣点列居中） */
+/* 账目徽章：挂在宣告座位扣点下方 */
 .d-account {
   font-size: 20rpx; color: #f5f0e1; background: rgba(201, 162, 39, 0.22);
   padding: 2rpx 12rpx; border-radius: 999rpx; white-space: nowrap;

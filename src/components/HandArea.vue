@@ -13,8 +13,7 @@
     <view v-if="mustDiscard" class="hint warn">无牌可接，请选一张扣下</view>
     <view class="hand">
       <view v-for="t in hand" :key="t.id" class="tile-wrap">
-        <!-- 选中牌的悬浮按钮：可宣告时显示「算X账/不算账」，否则两端皆可接时显示「上端/下端」；
-             两端都构成账（2 个宣告项）时无"普通端"可走，不显示「不算账」 -->
+        <!-- 选中牌的悬浮按钮：可宣告时显示「算X账/不算账」，否则两端皆可接时显示「上端/下端」 -->
         <view v-if="t.id === selectedId && myTurn && !mustDiscard && (declarations.length || bothEnds)" class="side-float">
           <template v-if="declarations.length">
             <button
@@ -36,7 +35,7 @@
           @click="onTileTap(t.id)"
         />
       </view>
-      <!-- 扣牌与手牌同一行（不单独占行）：不挤压下方出牌/扣牌按钮空间 -->
+      <!-- 扣牌与手牌同一行，不挤压下方按钮空间 -->
       <template v-if="kept.length">
         <text class="kept-label">扣牌：</text>
         <PlayingTile
@@ -50,7 +49,7 @@
     </view>
     <view class="actions" v-if="myTurn">
       <view class="btn-row">
-        <!-- 该牌上下端都可接且两端点数不同：必须先点"上端/下端"选端（点选端即出牌），出牌按钮禁用防误触默认端 -->
+        <!-- 两端都可接时必须先选端，出牌按钮禁用防误触默认端 -->
         <button class="btn-primary" :disabled="!selectedId || mustDiscard || bothEnds" @click="$emit('ui-click'); $emit('confirm-play')">出牌</button>
         <button class="btn-secondary" :disabled="!selectedId || !mustDiscard" @click="$emit('ui-click'); $emit('confirm-discard')">扣牌</button>
       </view>
@@ -67,7 +66,7 @@ import { placeSides } from '../core/rules.js'
 const props = defineProps({
   hand: Array,
   kept: Array,
-  // 我的绝对座位：头像颜色与其他玩家视角中"我"的颜色一致（颜色绑定座位而非位置）
+  // 头像颜色绑定座位而非位置
   seat: { type: Number, default: 0 },
   playableIds: Array,
   myTurn: Boolean,
@@ -101,13 +100,12 @@ const selectedTile = computed(() =>
 )
 
 /**
- * 选中的牌可放置端选项：首出前为 []（无选择器）；可接时为 placeSides 结果（0/1/2 项）。
- * 1 项 = 只有一端可接，不显示选择器（出牌时按唯一端自动放置）；2 项 = 两端都可接，显示选择器。
+ * 选中的牌可放置端选项：首出前为 []；1 项 = 只有一端可接不显示选择器；2 项 = 显示选择器。
  */
 const sideOptions = computed(() => {
   if (!props.myTurn || !selectedTile.value || !props.openEnds) return []
   const options = placeSides(selectedTile.value, props.openEnds)
-  // 链两端待接点数相同（如 3|3）：上下端无差异，不显示选择器，出牌固定放下端
+  // 链两端点数相同：上下端无差异，不显示选择器
   if (options.length === 2 && props.openEnds.top === props.openEnds.bottom) return []
   return options
 })
@@ -119,7 +117,7 @@ defineExpose({ bothEnds })
 <style scoped>
 .hand-area { display: flex; flex-direction: column; align-items: center; gap: 12rpx; padding: 16rpx 0; }
 .hand-header { width: 100%; display: flex; justify-content: center; align-items: center; gap: 12rpx; }
-/* 头像包裹层：作为 slot 提示（如"点击屏幕任意处继续"）的绝对定位基准 */
+/* 头像包裹层：slot 提示的绝对定位基准 */
 .avatar-wrap { position: relative; }
 .header-info { display: flex; flex-direction: column; }
 .name { font-size: 24rpx; }
@@ -128,14 +126,13 @@ defineExpose({ bothEnds })
 .hand { display: flex; gap: 10rpx; justify-content: center; align-items: center; flex-wrap: wrap; }
 .kept-label { font-size: 22rpx; color: #b0a685; }
 .actions { display: flex; gap: 20rpx; align-items: center; justify-content: center; flex-wrap: nowrap; white-space: nowrap; }
-/* 出牌/扣牌按钮行：uni-app button 默认 display:block 会竖着堆叠，必须显式开 flex 才能并排同一行 */
+/* 出牌/扣牌按钮行：uni-app button 默认 display:block 会竖着堆叠，须显式开 flex */
 .btn-row { display: flex; gap: 20rpx; align-items: center; justify-content: center; flex-wrap: nowrap; }
-/* 出牌/扣牌按钮收窄内边距，保证窄屏（手机竖屏）下两个按钮也稳在同一行不换行 */
+/* 收窄内边距，窄屏下两按钮稳在同一行 */
 .actions .btn-primary, .actions .btn-secondary { padding: 18rpx 48rpx; }
-/* 每张手牌的包裹层：作为悬浮端按钮（side-float）的绝对定位基准 */
+/* 手牌包裹层：悬浮端按钮的定位基准 */
 .tile-wrap { position: relative; }
-/* 悬浮在选中牌正上方的两个端按钮：小巧尺寸（手牌上方悬浮层，避免喧宾夺主），
-   向上偏移（约一张牌高），完全不遮牌面。按钮间距适当拉开，减少连点误触 */
+/* 悬浮在选中牌正上方的端按钮：完全不遮牌面 */
 .side-float {
   position: absolute;
   left: 50%; top: -96rpx;

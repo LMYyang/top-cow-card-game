@@ -1,4 +1,3 @@
-<!-- src/pages/roomlist/roomlist.vue -->
 <template>
   <view class="roomlist">
     <view class="head">
@@ -56,8 +55,7 @@ async function refreshRooms() {
   }
 }
 
-/** 点击房间条目加入：复用大厅的 enter 流程（建连/昵称持久化在 lobby 已完成，这里直接带昵称请求）；
- *  携带本地旧 token：断线重进同一房时服务器复用历史座位，不挤出新座位 */
+/** 点击房间条目加入：带昵称与本地旧 token 请求入房，断线重进时服务器复用历史座位 */
 async function joinById(roomId) {
   if (listLoading.value) return
   try {

@@ -15,15 +15,15 @@ export function createGame(rng = Math.random, rollerSeat = 0, settings = DEFAULT
     rng,
     state: 'ROLLING',
     roundNo: 1,
-    rollerSeat, // 第一局默认 0；连续局传入上一局赢家
+    rollerSeat,
     leaderSeat: null,
-    tableTile: null, // 链上最新出的一张牌（兼容保留）
+    tableTile: null,
     openEnds: null, // { top, bottom } 链两端待接点数；首出前为 null
-    tableHistory: [], // [{ seat, tiles: [tile] }] 出牌历史（扣牌为 { seat, discarded: tile }）
+    tableHistory: [], // [{ seat, tiles }] 出牌历史（扣牌为 { seat, discarded }）
     players: [0, 1, 2, 3].map((seat) => ({ seat, hand: [], kept: [] })),
     currentSeat: null,
     result: null,
-    redealUsed: new Set(), // 本局已申请过重新发牌的座位（每人每局 1 次，防死循环）
+    redealUsed: new Set(), // 每人每局限申请 1 次重发
     settings: normalizeSettings(settings),
     account: null, // { seat, type } 本局宣告（一局最多一次）
   }
@@ -71,7 +71,7 @@ export function redeal(g, seat) {
   g.tableHistory = []
   g.leaderSeat = null
   g.currentSeat = null
-  g.rollerSeat = seat // 申请人打骰
+  g.rollerSeat = seat
   g.redealUsed.add(seat)
   g.state = 'ROLLING'
   return { ok: true }
@@ -87,15 +87,12 @@ function advanceTurn(g) {
   do {
     g.currentSeat = (g.currentSeat + 1) % 4
   } while (g.players[g.currentSeat].hand.length === 0)
-  // 死局自动结算（仅算账局）：有人宣告算账（g.account）且链两端点全部「冻结」
-  // （该点数的所有竖牌都已上链）时，剩余手牌永远接不上任一端，剩下只会是各家轮流
-  // 扣牌的走过场——等价结局，直接把余手全部记扣、立即进入结算，省掉连续扣牌回合。
-  // 非算账局保持原流程（AI 不会点算账，按民间习惯走完扣牌）。
+  // 死局自动结算（仅算账局）：链两端点全部「冻结」时剩余手牌永远接不上，
+  // 直接把余手全部记扣、立即进入结算。非算账局保持原流程。
   const ends = g.openEnds
   if (ends && g.account && g.players.every((p) => playableTilesEnds(p.hand, ends).length === 0)) {
     for (const p of g.players) {
-      // 余手逐张记扣，并同步写 tableHistory（discarded 条目）：亮牌阶段各区域靠扣牌历史
-      // 翻牌面，不写则自动结算进 kept 的别家余手在终局亮牌时看不到
+      // 余手逐张记扣，并同步写 tableHistory（亮牌阶段靠扣牌历史翻牌面）
       for (const t of p.hand) {
         p.kept.push(t)
         g.tableHistory.push({ seat: p.seat, discarded: t })
@@ -171,7 +168,7 @@ export function play(g, seat, tileIds, side = 'bottom', declare = false) {
   g.tableTile = tile
 
   if (g.openEnds === null) {
-    // 首出：链两端 = 该牌两端（未镜像渲染：上端 b、下端 a）
+    // 首出：链两端 = 该牌两端（未镜像：上端 b、下端 a）
     g.openEnds = { top: tile.b, bottom: tile.a }
   } else {
     g.openEnds = nextOpenEnds(g.openEnds, tile, placement.side, placement.mirrored)

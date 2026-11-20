@@ -1,6 +1,5 @@
-// src/core/pips.js
 /** 骨牌一端点阵：n 点在 3x3 网格中的位置（0-8，按行）
- *  注：幺点（1）、二点（2）传统上贴半区外边缘——竖牌上半贴顶（*_TOP）、下半贴底（*_BOTTOM），不居中放 */
+ *  幺点（1）、二点（2）传统上贴半区外边缘（*_TOP/*_BOTTOM），不居中放 */
 export const PIP_LAYOUTS = {
   1: [1],
   '1_TOP': [1],
@@ -19,8 +18,8 @@ export const PIP_LAYOUTS = {
 const PIP_ROTATE_CCW = [6, 3, 0, 7, 4, 1, 8, 5, 2]
 export const rotatePipsCCW = (layout) => layout.map((p) => PIP_ROTATE_CCW[p])
 
-/** 单个点的颜色（按未旋转的基准位置）：1、4 点全红；大天（6|6）b 端左列（0、3、6）红、
- *  a 端右列（2、5、8）红——竖牌上半左列红、下半右列红，横放时呈 S 形红带；其余全黑（民间骨牌传统） */
+/** 单个点的颜色（按未旋转的基准位置）：1、4 点全红；大天（6|6）b 端左列红、
+ *  a 端右列红——横放时呈 S 形红带；其余全黑（民间骨牌传统） */
 export function pipColorAt(name, n, face, basePos) {
   if (n === 1 || n === 4) return 'red'
   if (name === '大天' && n === 6) {

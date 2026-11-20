@@ -11,7 +11,7 @@ export function mulberry32(seed) {
   }
 }
 
-/** Fisher-Yates 洗牌，返回新数组。rng 可注入以便测试复现 */
+/** Fisher-Yates 洗牌，返回新数组 */
 export function shuffle(tiles, rng = Math.random) {
   const arr = [...tiles]
   for (let i = arr.length - 1; i > 0; i--) {

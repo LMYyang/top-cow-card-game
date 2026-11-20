@@ -1,4 +1,3 @@
-<!-- src/pages/settings/settings.vue -->
 <template>
   <view class="settings">
     <text class="title">游戏设置</text>
@@ -22,9 +21,7 @@
         </view>
       </template>
     </view>
-    <!-- 牌面样式：纯客户端偏好（仅主菜单「游戏设置」入口展示），只影响本地渲染；
-         联网房间设置页隐藏（room.setSettings 只同步算账设置，皮肤本就不上传，
-         其他玩家看到的是各自本地的样式/默认样式） -->
+    <!-- 牌面样式：纯客户端偏好，只影响本地渲染；联网房间设置页隐藏 -->
     <view v-if="!isNet" class="card skin-card">
       <view class="skin-header">
         <text class="row-title">牌面样式</text>
@@ -48,7 +45,7 @@
       </view>
     </view>
     <view class="actions">
-      <!-- 保存按钮仅联网模式需要（房间设置走服务器）；单机模式算账开关点选即存，无必保存 -->
+      <!-- 保存按钮仅联网模式需要；单机模式点选即存 -->
       <button v-if="isNet && !readonly" class="btn-primary" @click="save">保存</button>
       <button class="btn-secondary" @click="back">返回</button>
     </view>
@@ -75,7 +72,7 @@ const isNet = ref(false)
 const readonly = ref(false) // 联网非房主：只读（room.vue 跳转时 host=1/0 决定）
 const draft = reactive({ ...DEFAULT_SETTINGS })
 let offRoomState = null
-let dirty = false // 用户是否已动过 draft（动过后不再用 room.state 推送覆盖未保存的编辑）
+let dirty = false // 动过 draft 后不再用 room.state 推送覆盖未保存的编辑
 
 onLoad((query) => {
   isNet.value = query.mode === 'net'
@@ -115,22 +112,20 @@ function toggleAcc(key) {
   persistSolo()
 }
 
-// 单机即时持久化：单机模式无保存按钮（toggle 即存），点选直接落 storage，
-// useGame 开局读 dingniuzi_settings 才能拿到最新值。联网模式走「保存」按钮批量提交，不动它
+// 单机即时持久化：toggle 即存（useGame 开局读 storage 才能拿到最新值），联网走「保存」批量提交
 function persistSolo() {
   if (!isNet.value) uni.setStorageSync('dingniuzi_settings', { ...draft })
 }
 
-// ---- 牌面样式：点选即存即生效（预览用真实 PlayingTile 传 skin prop，无需保存按钮） ----
+// ---- 牌面样式：点选即存即生效 ----
 const skin = ref(loadSkin())
-const previewTile = { id: 'skin-demo', name: '大天', a: 6, b: 6 } // 6|6 预览：两半区都有红点带，最能看出配色差异
+const previewTile = { id: 'skin-demo', name: '大天', a: 6, b: 6 }
 function pickSkin(id) {
   skin.value = id
   saveSkin(id)
 }
 
-// 联网保存走 net.request 而非 useNetGame：后者每次调用新建实例（新 view/fx + 重挂
-// game.state 处理器并触发 reconnect 握手拉快照），设置页只需一条请求，直接用 sharedNet 单例即可
+// 联网保存直接用 sharedNet 单例：useNetGame 每次调用新建实例并触发 reconnect 握手，设置页只需一条请求
 async function save() {
   if (isNet.value) {
     try {
@@ -166,16 +161,15 @@ function back() {
 .row-sub { font-size: 22rpx; color: #b0a685; line-height: 1.4; }
 .switch { width: 84rpx; height: 44rpx; border-radius: 999rpx; background: #3a2c14; border: 2rpx solid #5a4a32; position: relative; transition: background 0.2s; flex: none; }
 .switch.on { background: #c9a227; border-color: #c9a227; }
-/* 只读态（联网非房主）：整体降透明度示意不可操作，点击已被 toggle 函数守卫拦截 */
+/* 只读态（联网非房主）：降透明度示意不可操作 */
 .switch.disabled, .checkbox.disabled { opacity: 0.45; }
 .switch .knob { position: absolute; top: 2rpx; left: 2rpx; width: 36rpx; height: 36rpx; border-radius: 50%; background: #f5f0e1; transition: left 0.2s; }
 .switch.on .knob { left: 42rpx; }
 .checkbox { width: 44rpx; height: 44rpx; border-radius: 8rpx; border: 2rpx solid #8a7040; color: transparent; display: flex; align-items: center; justify-content: center; font-size: 28rpx; flex: none; box-sizing: border-box; }
 .checkbox.on { background: #c9a227; border-color: #c9a227; color: #fff; }
-/* 保存/返回同一行：flex 横排等宽（uni-app button 默认块级竖排，须显式开 flex） */
+/* 保存/返回同一行等宽（uni-app button 默认块级竖排） */
 .actions { display: flex; flex-direction: row; gap: 20rpx; margin-top: 16rpx; }
 .actions .btn-primary, .actions .btn-secondary { flex: 1; padding: 18rpx 0; margin: 0; }
-/* 单机模式无保存按钮时返回独占一行，保持居中等宽观感 */
 .actions .btn-secondary:only-child { flex: 1; }
 .readonly-hint { text-align: center; font-size: 22rpx; color: #b0a685; }
 /* 牌面样式选择 */

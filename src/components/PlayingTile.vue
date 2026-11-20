@@ -1,4 +1,3 @@
-<!-- src/components/PlayingTile.vue -->
 <template>
   <view class="tile" :class="[sizeClass, skinCls, { selected, dimmed, faceDown, horizontal: isHorizontal, mirrored }]" @click="$emit('tap')">
     <template v-if="!faceDown">
@@ -37,25 +36,22 @@ const props = defineProps({
   selected: { type: Boolean, default: false },
   dimmed: { type: Boolean, default: false },
   size: { type: String, default: 'md' }, // sm | md | lg | xs | xxs
-  horizontal: { type: Boolean, default: false }, // 横放（宽高互换），默认竖放；由调用方显式指定
-  mirrored: { type: Boolean, default: false }, // 上下镜像：b 在下、a 在上（点数对接用，无旋转动画）
+  horizontal: { type: Boolean, default: false }, // 横放（宽高互换），由调用方显式指定
+  mirrored: { type: Boolean, default: false }, // 上下镜像：b 在下、a 在上（点数对接用）
   skin: { type: String, default: '' }, // 皮肤 id 覆盖（设置页预览用）；空 = 读本地设置
 })
 
-// 牌面皮肤：默认读本地设置（模块级缓存避免每实例重复读 storage；设置页保存后
-// 下次进页面组件重建即生效）。显式传 skin prop 时优先（预览即时切换，不落缓存）
+// 牌面皮肤：默认读本地设置（模块级缓存；显式传 skin prop 时优先，预览即时切换不落缓存）
 let skinCache = null
 const skinCls = computed(() => skinClass(props.skin || (skinCache ??= loadSkin())))
 
 const isHorizontal = computed(() => props.horizontal)
 
 const sizeClass = computed(() => `tile-${props.size}`)
-// 横放时点阵按"竖牌旋转 90°"渲染（二点变上下排、六点变两行三列、对角线换向），保持点数与牌面方位一致
+// 横放时点阵按"竖牌旋转 90°"渲染，保持点数与牌面方位一致
 const rotate = (layout) => (isHorizontal.value ? rotatePipsCCW(layout) : layout)
 // 上半区点数：未镜像显示 b，镜像后显示 a；下半区相反。
-// 1 点、2 点贴半区外边缘（上半区贴顶 *_TOP、下半区贴底 *_BOTTOM，传统骨牌样式）。
-// pos 为未旋转的基准位置，face 标明该半区原本代表 a 还是 b（红黑判定基于点阵原始方位，
-// 如大天 b 端左列红、a 端右列红），旋转后仅位置变
+// 1/2 点贴半区外边缘（传统骨牌样式）。红黑判定基于点阵原始方位，旋转后仅位置变
 const layoutKey = (n, half) => {
   if (n === 1) return half === 'top' ? '1_TOP' : '1_BOTTOM'
   if (n === 2) return half === 'top' ? '2_TOP' : '2_BOTTOM'
@@ -111,8 +107,7 @@ function pipStyle(pos) {
 }
 .tile.dimmed { opacity: 0.35; }
 
-/* 横放：盒子直接横过来（宽高互换、两半区左右排列），不用 transform 旋转，
-   避免旋转溢出与负 margin 补偿，保证与竖牌垂直居中对齐 */
+/* 横放：盒子直接横过来，不用 transform 旋转，保证与竖牌垂直居中对齐 */
 .tile.horizontal { flex-direction: row; }
 .tile.horizontal .divider { width: 2rpx; height: auto; align-self: stretch; margin: 10rpx 0; }
 .tile-md.horizontal { width: 144rpx; height: 96rpx; }
@@ -120,20 +115,15 @@ function pipStyle(pos) {
 .tile-xs.horizontal { width: 72rpx; height: 48rpx; }
 .tile-xxs.horizontal { width: 54rpx; height: 36rpx; }
 .tile-lg.horizontal { width: 192rpx; height: 128rpx; }
-/* 镜像（mirrored）通过模板交换上下半区渲染，无 transform，避免与 selected/horizontal 组合冲突 */
+/* 镜像通过模板交换上下半区渲染，无 transform，避免与 selected/horizontal 组合冲突 */
 
 .half {
   flex: 1;
-  /* min-height/min-width 置 0：flex 子项默认 min-*:auto（自动最小尺寸=内容尺寸），
-     小尺寸牌（sm/xs）半区内容（3 行点 + padding）超过 flex 均分高度时会把 half 撑到
-     内容高，两个 half + 分隔线溢出牌盒，下半区的点被挤出牌面下缘（糖果皮肤最明显）；
-     置 0 后 half 严格按 flex 均分，点在轨道内居中、最多溢出轨道但仍在 half 内 */
+  /* min-*:auto（内容最小尺寸）会把小尺寸牌的半区撑到内容高溢出牌盒；置 0 后严格按 flex 均分 */
   min-height: 0;
   min-width: 0;
   display: grid;
-  /* minmax(0,1fr) 而非裸 1fr：1fr 轨道有内容最小尺寸（min-content），小尺寸牌（xs/sm）
-     的点比轨道大时会撑大轨道使整个网格向下/向右拉伸（糖果皮肤描边点更明显，点位下移穿帮）；
-     minmax(0,1fr) 强制轨道均分，点在轨道内居中溢出，分布始终均匀 */
+  /* minmax(0,1fr) 强制轨道均分：裸 1fr 轨道有 min-content 最小尺寸，小尺寸牌的点会撑大轨道使点位偏移 */
   grid-template-rows: repeat(3, minmax(0, 1fr));
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 6rpx;
@@ -187,22 +177,19 @@ function pipStyle(pos) {
 .skin-azure .pip.black { background: #2a5a7a; }
 .skin-azure .tile-back { background: linear-gradient(145deg, #3a6e8c, #1e465c); }
 
-/* ---- 糖果亮色：高饱和明快配色、加粗大点（适老醒目） ---- */
+/* ---- 糖果亮色：高饱和明快配色、加粗大点 ---- */
 .tile.skin-candy {
   background: linear-gradient(145deg, #fffdf2, #ffe9b8);
   box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.45), inset 0 0 0 2rpx #ff9a3c;
 }
 .skin-candy .divider { background: #ff9a3c; }
-/* 描边用 border-box 画在点的固定尺寸内（pip 默认 content-box，边框会把点撑大 2rpx，
-   导致糖果皮肤点比其他皮肤大），整体大小与其他皮肤保持一致 */
+/* 描边用 border-box 画在点的固定尺寸内（默认 content-box 会被边框撑大） */
 .skin-candy .pip { box-sizing: border-box; border: 1rpx solid rgba(0, 0, 0, 0.25); }
 .skin-candy .pip.red { background: #e6402a; }
 .skin-candy .pip.black { background: #2244c8; }
 .skin-candy .tile-back { background: linear-gradient(145deg, #ff9a3c, #e05a20); }
 
-/* ---- 樱花物语：加深樱粉瓷面、玫瑰金分隔、绯粉点（红）与暖棕点（黑）。
-     牌面保持素净无图案（波点/花瓣/花苞已移除，避免干扰点数辨识）；
-     装饰只留在无点数的牌背（居中白色小爱心） ---- */
+/* ---- 樱花物语：樱粉瓷面、玫瑰金分隔、绯粉点（红）与暖棕点（黑）；装饰只留在牌背 ---- */
 .tile.skin-sakura {
   background: linear-gradient(145deg, #f8d0de, #ecafc6);
   box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.45), inset 0 0 0 1rpx rgba(190, 80, 120, 0.5);
@@ -211,7 +198,7 @@ function pipStyle(pos) {
 .skin-sakura .pip.red { background: #cc4d75; }
 .skin-sakura .pip.black { background: #7a4a58; }
 .skin-sakura .tile-back { background: linear-gradient(145deg, #e07a9c, #a84466); }
-/* 牌背居中小爱心：两块圆顶矩形分别绕内下角 ±45° 旋转拼成心形，交点（心的尖）在牌背 60% 高度处光学居中 */
+/* 牌背居中小爱心：两块圆顶矩形绕内下角 ±45° 旋转拼成心形 */
 .skin-sakura .tile-back::before,
 .skin-sakura .tile-back::after {
   content: '';
@@ -235,7 +222,7 @@ function pipStyle(pos) {
   transform-origin: 100% 100%;
 }
 
-/* ---- 经典骨牌（skin-classic）：默认样式即经典款，无需覆盖（保留显式类名便于预览定位） ---- */
+/* ---- 经典骨牌（skin-classic）：默认样式即经典款，显式类名便于预览定位 ---- */
 .tile.skin-classic { }
 
 .tile-back {

@@ -1,4 +1,3 @@
-// scripts/gen-sounds.mjs
 // 音效合成器：零依赖，手写 WAV（44 字节头 + PCM 16bit 单声道 22050Hz）。
 // 运行 node scripts/gen-sounds.mjs 产出音效到 src/static/sounds/（产物已提交仓库，
 // 仅调整音色时手动重跑；package.json 有 gen:sounds 别名）。
@@ -48,7 +47,7 @@ function toWav(samples) {
 }
 
 const sec = (s) => Math.round(s * SR)
-/** 种子随机（mulberry32）：所有噪声源统一用它，产物可复现 */
+/** 种子随机（mulberry32），产物可复现 */
 function rng(seed) {
   return () => {
     seed |= 0; seed = (seed + 0x6d2b79f5) | 0
@@ -111,7 +110,6 @@ function note(f, dur, amp) {
 
 /**
  * 拨弦/古筝质感音符：基频 + 二三次谐波，快 attack、指数衰减、相位随机微偏。
- * 国风旋律与和弦的基本单元；amp 整体压低供 bgm 使用。
  */
 function pluck(f, dur, amp, rnd) {
   const n = sec(dur)
@@ -226,7 +224,7 @@ const sounds = {}
     let at = 0.05
     for (const [len, idx] of motifs[phrase]) {
       if (idx >= 0) {
-        const f = PENTA[idx] * (phrase % 2 === 1 && idx >= 3 ? 1 : 1) // 音区保持中低
+        const f = PENTA[idx]
         mix(out, pluck(f, Math.min(len * 0.22 + 0.3, 0.6), 0.5, r), base + at)
       }
       at += len * 0.22
@@ -239,7 +237,7 @@ const sounds = {}
   sounds.bgm = out
 }
 
-// 10. turn：轮到你出牌——木质双音"叩叩"（D5+A5 拨弦，温和提醒，比 click 温和比 suanzhang 轻）
+// 10. turn：轮到你出牌——木质双音"叩叩"（D5+A5 拨弦）
 {
   const out = silence(0.5)
   mix(out, pluck(587.33, 0.16, 0.55, rng(51))) // D5

@@ -3,13 +3,9 @@ import { ref } from 'vue'
 import { SERVER_WS_URL } from './config.js'
 
 /**
- * WebSocket 客户端封装：
- * - connect(): 首次建连，成功 resolve；失败 reject（不自动重连，调用方决定重试）
- * - request(type, payload): Promise<响应消息>，8s 超时 reject
- * - on(type, handler): 推送订阅（跨重连保留），返回取消函数
- * - close(): 手动关闭，之后不再自动重连
- * - status: ref<'connecting'|'open'|'reconnecting'|'closed'>
- * 已建立后的意外断线自动重连：指数退避 1s→2s→4s→8s，最多 5 次。
+ * WebSocket 客户端封装：connect() / request(type, payload)（8s 超时）/
+ * on(type, handler)（推送订阅，返回取消函数）/ close() / status。
+ * 首连失败不自动重连；建立后的意外断线自动重连：指数退避 1s→2s→4s→8s，最多 5 次。
  */
 
 const REQUEST_TIMEOUT = 8000
@@ -47,7 +43,7 @@ export function createNet() {
       return
     }
     if (!everOpened) {
-      // 首连失败（onerror/onclose 在 open 前）：由 connect() 的 Promise reject 处理，不自动重连
+      // 首连失败：由 connect() 的 Promise reject 处理
       status.value = 'closed'
       return
     }
@@ -105,7 +101,7 @@ export function createNet() {
         reject(new Error('连接服务器失败'))
       }
       ws2.onerror = () => {
-        // 部分环境 onerror 后不一定触发 onclose：未 open 的失败直接 reject，由调用方决定重试
+        // 未 open 的失败直接 reject
         if (!opened) reject(new Error('连接服务器失败'))
       }
     })
@@ -135,7 +131,6 @@ export function createNet() {
     status.value = 'closed'
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     if (ws) { try { ws.close() } catch { /* noop */ } }
-    // 未决请求全部失败
     for (const entry of pending.values()) {
       clearTimeout(entry.timer)
       entry.reject(new Error('连接已关闭'))

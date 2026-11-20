@@ -1,4 +1,3 @@
-<!-- src/components/PlayerAvatar.vue -->
 <template>
   <view class="avatar" :class="sizeClass" :style="{ background: bgColor }">
     <view class="head" />
@@ -7,9 +6,7 @@
 </template>
 
 <script>
-// 座位色表：供本组件与 TableTimeline 色点复用。
-// 颜色绑定绝对座位（服务器座位号）：所有玩家视角中同一人的颜色一致，
-// 视图按本人旋转（自己永远在下方）时颜色不随位置漂移。
+// 座位色表：颜色绑定绝对座位，视图按本人旋转时颜色不随位置漂移
 export const SEAT_COLORS = {
   0: '#c9a227', // 座位 0（金）
   1: '#a04030', // 座位 1（红）
@@ -28,7 +25,6 @@ export default {
       return `avatar-${this.size}`
     },
     bgColor() {
-      // 非法 seat 回退灰（防御分支，正常不触发）
       return SEAT_COLORS[this.seat] || '#5a4a32'
     },
   },
