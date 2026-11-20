@@ -16,7 +16,7 @@ export function _resetForTest() {
 }
 
 const NAMES = [
-  'click', 'shuffle', 'play_card', 'other_play', 'pass',
+  'click', 'shuffle', 'play_card', 'other_play',
   'suanzhang', 'win', 'lose', 'turn',
 ]
 

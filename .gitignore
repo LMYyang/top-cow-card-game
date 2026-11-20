@@ -12,6 +12,9 @@ node_modules
 dist
 *.local
 
+# 构建产物（npm run build:server 可重新生成）
+server/server.bundle.mjs
+
 # Editor directories and files
 .idea
 *.suo
