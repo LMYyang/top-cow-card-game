@@ -6,7 +6,7 @@
  * 本文件专注于真实 IO 下的行为链路。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { WebSocket } from '../server/node_modules/ws/index.js'
+import { WebSocket } from 'ws'
 import { createServerApp } from '../server/index.js'
 
 let app

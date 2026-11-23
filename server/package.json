@@ -4,10 +4,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "postinstall": "cd .. && npm install"
+    "start": "node index.js"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.23.0"
   }
 }

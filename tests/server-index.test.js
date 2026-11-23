@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { WebSocket } from '../server/node_modules/ws/index.js'
+import { WebSocket } from 'ws'
 import { createServerApp } from '../server/index.js'
 
 let app // { httpServer, wss, port, mgr }
