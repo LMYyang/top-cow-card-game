@@ -58,19 +58,59 @@ describe('useSound', () => {
     now.mockRestore()
   })
 
-  it('静音：play 短路不创建实例、不播放', () => {
+  it('静音：toggleMute 三通道全静音，play 短路不创建实例、不播放', () => {
     const s = useSound()
     s.toggleMute()
-    expect(s.muted.value).toBe(true)
-    expect(uni.setStorageSync).toHaveBeenCalledWith('dingniuzi_muted', true)
+    expect(s.muted).toBe(true)
+    expect(uni.setStorageSync).toHaveBeenCalledWith('dingniuzi_sound', expect.objectContaining({
+      bgm: expect.objectContaining({ muted: true }),
+      sfx: expect.objectContaining({ muted: true }),
+      voice: expect.objectContaining({ muted: true }),
+    }))
     s.play('click')
     expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
   })
 
-  it('静音持久化：storage 已存 true 时初始化即静音', () => {
-    globalThis.uni.getStorageSync.mockImplementation((k) => (k === 'dingniuzi_muted' ? true : ''))
+  it('静音持久化：storage 已存全静音配置时初始化即静音', () => {
+    globalThis.uni.getStorageSync.mockImplementation((k) => (k === 'dingniuzi_sound'
+      ? { bgm: { muted: true, volume: 1 }, sfx: { muted: true, volume: 1 }, voice: { muted: true, volume: 1 } }
+      : ''))
     const s = useSound()
-    expect(s.muted.value).toBe(true)
+    expect(s.muted).toBe(true)
+  })
+
+  it('分通道静音：voice 静音不影响音效与 bgm', () => {
+    const s = useSound()
+    s.updateChannel('voice', { muted: true })
+    expect(s.sound.value.voice.muted).toBe(true)
+    expect(s.sound.value.sfx.muted).toBe(false)
+    expect(s.sound.value.bgm.muted).toBe(false)
+    s.playCardVoice('红十')
+    s.playWithholdVoice()
+    expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
+    s.play('click')
+    expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1)
+  })
+
+  it('音量调节：play 前把实例 volume 刷成当前配置；持久化到 storage', () => {
+    const s = useSound()
+    s.updateChannel('sfx', { volume: 0.4 })
+    s.play('click')
+    expect(lastCtx.volume).toBe(0.4)
+    expect(uni.setStorageSync).toHaveBeenCalledWith('dingniuzi_sound', expect.objectContaining({
+      sfx: expect.objectContaining({ volume: 0.4 }),
+    }))
+  })
+
+  it('bgm 音量 = 基础响度 × 通道音量；bgm 静音后 startBgm 不播、updateChannel 实时停 bgm', () => {
+    const s = useSound()
+    s.updateChannel('bgm', { volume: 0.5 })
+    s.startBgm()
+    expect(lastCtx.volume).toBeCloseTo(0.1) // BGM_BASE_VOLUME 0.2 × 0.5
+    s.updateChannel('bgm', { muted: true })
+    expect(lastCtx.stop).toHaveBeenCalled()
+    s.startBgm()
+    expect(uni.createInnerAudioContext).toHaveBeenCalledTimes(1) // 没有新建实例
   })
 
   it('音频 API 异常被吞掉，不影响 play 返回', () => {
@@ -138,11 +178,18 @@ describe('useSound', () => {
     expect(lastCtx.src).toMatch(/^\/static\/sounds\/withhold\/\w+\.mp3$/)
   })
 
-  it('语音静音短路：muted 时不播语音', () => {
+  it('语音静音短路：toggleMute 后不播语音', () => {
     const s = useSound()
     s.toggleMute()
     s.playCardVoice('红十')
     s.playWithholdVoice()
     expect(uni.createInnerAudioContext).not.toHaveBeenCalled()
+  })
+
+  it('坏配置兜底：storage 里非法配置回退默认', () => {
+    globalThis.uni.getStorageSync.mockImplementation((k) => (k === 'dingniuzi_sound' ? { bgm: { volume: 'x', muted: 1 } } : ''))
+    const s = useSound()
+    expect(s.sound.value.bgm).toEqual({ muted: false, volume: 1 })
+    expect(s.sound.value.sfx).toEqual({ muted: false, volume: 1 })
   })
 })

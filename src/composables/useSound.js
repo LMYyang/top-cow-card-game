@@ -1,18 +1,29 @@
-// 游戏音效单例：实例池（懒创建常驻复用）+ <50ms 防重入节流 + 静音持久化。
+// 游戏音效单例：实例池（懒创建常驻复用）+ <50ms 防重入节流 + 音量/静音持久化。
 // 所有 uni 音频 API 包 try-catch：音频失败静默，绝不影响游戏逻辑。
-// bgm 特例：循环播放，用独立 start/stopBgm 控制，与操作音共用同一静音开关。
-// 语音特例：与操作音共用节流与静音，但按"语音通道"独占——新语音顶掉旧语音，避免叠音。
+// 三通道独立控制（设置页可分别调音量/静音）：
+// - bgm：背景音乐，循环播放，用独立 start/stopBgm 控制
+// - sfx：操作音效（按钮/洗牌/输赢等）
+// - voice：人声播报（牌名/扣牌/算账），按"语音通道"独占——新语音顶掉旧语音，避免叠音
 import { ref } from 'vue'
 
-// 单例状态放模块级：多处 useSound() 共享同一 muted/池/时间戳
+export const SOUND_STORAGE_KEY = 'dingniuzi_sound'
+
+// 单例状态放模块级：多处 useSound() 共享同一音量配置/池/时间戳
 let ctxPool = null
 let lastPlayAt = {}
-let muted = null // ref，懒初始化（_resetForTest 后重读 storage）
+let sound = null // ref，懒初始化（_resetForTest 后重读 storage）
+
+/** 默认音量配置：1 = 不 attenuate，bgm 固定压低 */
+export const DEFAULT_SOUND_CONF = {
+  bgm: { muted: false, volume: 1 },
+  sfx: { muted: false, volume: 1 },
+  voice: { muted: false, volume: 1 },
+}
 
 export function _resetForTest() {
   ctxPool = null
   lastPlayAt = {}
-  muted = null
+  sound = null
 }
 
 const NAMES = [
@@ -32,10 +43,38 @@ const ACCOUNT_VOICE = 'suanzhang_voice'
 // bgm 候选（bgm/ 目录序号文件，随机选一循环；增删曲目只需改此清单）
 const BGM_TRACKS = ['05', '20', '27', '32', '50', '54']
 // 统一压低：源文件响度不一，不盖过前景音
-const BGM_VOLUME = 0.2
+const BGM_BASE_VOLUME = 0.2
 
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)]
+}
+
+function normalizeConf(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const out = {}
+  for (const ch of ['bgm', 'sfx', 'voice']) {
+    const c = src[ch] && typeof src[ch] === 'object' ? src[ch] : {}
+    const d = DEFAULT_SOUND_CONF[ch]
+    out[ch] = {
+      muted: typeof c.muted === 'boolean' ? c.muted : d.muted,
+      volume: typeof c.volume === 'number' && c.volume >= 0 && c.volume <= 1 ? c.volume : d.volume,
+    }
+  }
+  return out
+}
+
+function loadConf() {
+  try {
+    return normalizeConf(uni.getStorageSync(SOUND_STORAGE_KEY))
+  } catch {
+    return JSON.parse(JSON.stringify(DEFAULT_SOUND_CONF))
+  }
+}
+
+function saveConf(conf) {
+  try {
+    uni.setStorageSync(SOUND_STORAGE_KEY, conf)
+  } catch { /* 存储不可用：仅影响下次启动 */ }
 }
 
 function getCtx(name) {
@@ -52,7 +91,7 @@ function getCtx(name) {
       : `/static/sounds/${name}.wav`
     if (name.startsWith('bgm_')) {
       ctx.loop = true
-      ctx.volume = BGM_VOLUME
+      ctx.volume = BGM_BASE_VOLUME
     }
     ctx.onError?.(() => {})
     ctxPool[name] = ctx
@@ -60,19 +99,36 @@ function getCtx(name) {
   return ctxPool[name]
 }
 
+/** 把非 bgm 实例的音量刷成当前配置（实例常驻复用，改音量必须覆盖池内旧值） */
+function applyVolume() {
+  if (!ctxPool) return
+  for (const [name, ctx] of Object.entries(ctxPool)) {
+    try {
+      if (name.startsWith('bgm_')) {
+        ctx.volume = sound.value.bgm.muted ? 0 : BGM_BASE_VOLUME * sound.value.bgm.volume
+      } else if (name.startsWith('card_') || name.startsWith('wh_') || name === 'voice_account') {
+        ctx.volume = sound.value.voice.volume
+      } else {
+        ctx.volume = sound.value.sfx.volume
+      }
+    } catch { /* 音频不可用：静默 */ }
+  }
+}
+
 export function useSound() {
-  if (muted === null) {
-    muted = ref(uni.getStorageSync('dingniuzi_muted') === true)
+  if (sound === null) {
+    sound = ref(loadConf())
   }
 
-  /** 播放音效。name ∈ NAMES；<50ms 同名重复忽略；muted 短路；异常静默 */
+  /** 播放音效。name ∈ NAMES；<50ms 同名重复忽略；sfx 静音短路；异常静默 */
   function play(name) {
-    if (muted.value || !NAMES.includes(name)) return
+    if (sound.value.sfx.muted || !NAMES.includes(name)) return
     const now = Date.now()
     if (lastPlayAt[name] && now - lastPlayAt[name] < 50) return
     lastPlayAt[name] = now
     try {
       const ctx = getCtx(name)
+      ctx.volume = sound.value.sfx.volume
       ctx.stop?.()
       ctx.play()
     } catch { /* 音频不可用：静默 */ }
@@ -84,9 +140,10 @@ export function useSound() {
    * playWithholdVoice()：扣牌时随机播一条。
    */
   function playVoice(voiceName) {
-    if (muted.value) return
+    if (sound.value.voice.muted) return
     try {
       const ctx = getCtx(voiceName)
+      ctx.volume = sound.value.voice.volume
       ctx.stop?.()
       ctx.play()
     } catch { /* 音频不可用：静默 */ }
@@ -107,9 +164,10 @@ export function useSound() {
   /** 起播背景音乐（循环，随机选一首，选定后保持不变）。
    *  调用时机由页面层保证在旧页卸载之后（onReady），避免旧页 stopBgm 把新局 BGM 停掉 */
   function startBgm() {
-    if (muted.value) return
+    if (sound.value.bgm.muted) return
     try {
       const ctx = getCtx(`bgm_${pickRandom(BGM_TRACKS)}`)
+      ctx.volume = BGM_BASE_VOLUME * sound.value.bgm.volume
       if (ctx.paused === false) return
       ctx.play()
     } catch { /* 音频不可用：静默 */ }
@@ -125,12 +183,27 @@ export function useSound() {
     }
   }
 
-  /** 切换静音并持久化。开静音停 bgm；解静音由页面 watch 恢复 */
-  function toggleMute() {
-    muted.value = !muted.value
-    try { uni.setStorageSync('dingniuzi_muted', muted.value) } catch { /* 存储不可用 */ }
-    if (muted.value) stopBgm()
+  /** 更新一条通道配置并持久化；bgm 通道实时生效（静音即停，解除后由页面 watch 恢复） */
+  function updateChannel(channel, patch) {
+    if (!sound.value[channel]) return
+    sound.value[channel] = { ...sound.value[channel], ...patch }
+    saveConf(sound.value)
+    if (channel === 'bgm') {
+      if (sound.value.bgm.muted) stopBgm()
+      else applyVolume()
+    } else {
+      applyVolume()
+    }
   }
 
-  return { play, muted, toggleMute, startBgm, stopBgm, playCardVoice, playWithholdVoice }
+  return {
+    play, sound, startBgm, stopBgm, playCardVoice, playWithholdVoice,
+    updateChannel,
+    // 兼容旧接口：全局静音 = 三通道全静音
+    get muted() { return sound.value.bgm.muted && sound.value.sfx.muted && sound.value.voice.muted },
+    toggleMute() {
+      const target = !this.muted
+      for (const ch of ['bgm', 'sfx', 'voice']) updateChannel(ch, { muted: target })
+    },
+  }
 }

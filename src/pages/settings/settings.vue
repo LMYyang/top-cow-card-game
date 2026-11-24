@@ -21,6 +21,32 @@
         </view>
       </template>
     </view>
+    <!-- 音量：背景音乐 / 音效 / 语音三通道，音量滑条 + 单独静音，纯客户端偏好 -->
+    <view class="card">
+      <view class="skin-header">
+        <text class="row-title">音量</text>
+        <text class="row-sub">背景音乐 / 音效 / 出牌语音分别调节，可单独静音</text>
+      </view>
+      <view v-for="ch in CHANNELS" :key="ch.key" class="row">
+        <view class="row-main">
+          <text class="row-title">{{ ch.label }}</text>
+          <slider
+            class="vol-slider"
+            :min="0"
+            :max="100"
+            :step="5"
+            :value="Math.round(sound[ch.key].volume * 100)"
+            :disabled="sound[ch.key].muted"
+            activeColor="#c9a227"
+            block-size="20"
+            @change="onVolume(ch.key, $event)"
+          />
+        </view>
+        <view class="switch" :class="{ on: !sound[ch.key].muted }" @click="toggleChannelMute(ch.key)">
+          <view class="knob" />
+        </view>
+      </view>
+    </view>
     <!-- 牌面样式：纯客户端偏好，只影响本地渲染；联网房间设置页隐藏 -->
     <view v-if="!isNet" class="card skin-card">
       <view class="skin-header">
@@ -59,7 +85,21 @@ import { onLoad } from '@dcloudio/uni-app'
 import { DEFAULT_SETTINGS, normalizeSettings } from '../../core/settings.js'
 import { TILE_SKINS, loadSkin, saveSkin } from '../../core/tileSkins.js'
 import { sharedNet } from '../../utils/net.js'
+import { useSound } from '../../composables/useSound.js'
 import PlayingTile from '../../components/PlayingTile.vue'
+
+const CHANNELS = [
+  { key: 'bgm', label: '背景音乐' },
+  { key: 'sfx', label: '音效' },
+  { key: 'voice', label: '出牌语音' },
+]
+const { sound, updateChannel } = useSound()
+function onVolume(key, e) {
+  updateChannel(key, { volume: (e.detail.value || 0) / 100 })
+}
+function toggleChannelMute(key) {
+  updateChannel(key, { muted: !sound.value[key].muted })
+}
 
 const ACCOUNTS = [
   { key: 'red', label: '红账', desc: '红十封住 4 点（链上已有另一张红十）' },
@@ -175,6 +215,8 @@ function back() {
 /* 牌面样式选择 */
 .skin-card { gap: 16rpx; padding: 24rpx; }
 .skin-header { display: flex; flex-direction: column; gap: 6rpx; }
+/* 音量滑条：占满 row-main 剩余宽度 */
+.vol-slider { margin: 12rpx 0 0; width: 100%; }
 .skin-grid { display: flex; flex-wrap: wrap; gap: 20rpx; }
 .skin-item {
   flex: 1 1 calc(50% - 10rpx);

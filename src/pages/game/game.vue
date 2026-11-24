@@ -162,12 +162,14 @@ import { sharedNet } from '../../utils/net.js'
  * 全部绑定走 computed 代理 + 空对象兜底（gameApi 就绪前模板已在渲染）；
  * solo 的 view/fx 为 reactive 对象、net 的 myTurn 等为 computed，isRef 区分后统一解包。
  */
-const { play, muted, toggleMute, startBgm, stopBgm, playCardVoice, playWithholdVoice } = useSound()
+const { play, sound, startBgm, stopBgm, playCardVoice, playWithholdVoice, updateChannel, toggleMute } = useSound()
 // BGM 首播放 onReady：redirectTo 重建本页时旧页卸载晚于新页 setup，
 // setup 起播会被旧页 stopBgm 停掉且恢复播放被浏览器自动播放策略拒绝 → 整局无声
 onUnmounted(() => stopBgm())
-watch(muted, (m) => { if (m === false) startBgm() })
-onReady(() => { if (muted.value === false) startBgm() })
+watch(() => sound.value.bgm, (c) => { if (!c.muted) startBgm() }, { deep: true })
+onReady(() => { if (!sound.value.bgm.muted) startBgm() })
+// 局内快捷静音键：一键全通道静音/恢复
+const muted = computed(() => sound.value.bgm.muted && sound.value.sfx.muted && sound.value.voice.muted)
 const isNet = ref(false)
 const gameApi = ref(null)
 onLoad((query) => {
