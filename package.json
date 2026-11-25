@@ -1,6 +1,7 @@
 {
   "name": "uni-preset-vue",
   "version": "0.0.0",
+  "description": "顶牛子：出牌斗智 · 多人对战（uni-app H5 + 单进程服务端）",
   "scripts": {
     "dev:custom": "uni -p",
     "dev:h5": "uni",
