@@ -70,6 +70,28 @@
         </view>
       </view>
     </view>
+    <!-- 桌布样式：纯客户端偏好，只影响本地牌桌背景；联网房间设置页隐藏 -->
+    <view v-if="!isNet" class="card skin-card">
+      <view class="skin-header">
+        <text class="row-title">桌布样式</text>
+        <text class="row-sub">更换牌桌底纹图案，只影响自己看到的桌面</text>
+      </view>
+      <view class="skin-grid">
+        <view
+          v-for="c in TABLE_CLOTHS"
+          :key="c.id"
+          class="cloth-item"
+          :class="[c.css, { active: cloth === c.id }]"
+          @click="pickCloth(c.id)"
+        >
+          <view class="cloth-preview">
+            <view class="cloth-swatch" :class="c.css" />
+          </view>
+          <text class="skin-name">{{ c.name }}</text>
+          <text class="skin-desc">{{ c.desc }}</text>
+        </view>
+      </view>
+    </view>
     <view class="actions">
       <!-- 保存按钮仅联网模式需要；单机模式点选即存 -->
       <button v-if="isNet && !readonly" class="btn-primary" @click="save">保存</button>
@@ -84,6 +106,7 @@ import { reactive, ref, onUnmounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { DEFAULT_SETTINGS, normalizeSettings } from '../../core/settings.js'
 import { TILE_SKINS, loadSkin, saveSkin } from '../../core/tileSkins.js'
+import { TABLE_CLOTHS, loadCloth, saveCloth } from '../../core/tableCloths.js'
 import { sharedNet } from '../../utils/net.js'
 import { useSound } from '../../composables/useSound.js'
 import PlayingTile from '../../components/PlayingTile.vue'
@@ -165,6 +188,13 @@ function pickSkin(id) {
   saveSkin(id)
 }
 
+// ---- 桌布样式：点选即存即生效 ----
+const cloth = ref(loadCloth())
+function pickCloth(id) {
+  cloth.value = id
+  saveCloth(id)
+}
+
 // 联网保存直接用 sharedNet 单例：useNetGame 每次调用新建实例并触发 reconnect 握手，设置页只需一条请求
 async function save() {
   if (isNet.value) {
@@ -232,4 +262,63 @@ function back() {
 .skin-name { font-size: 26rpx; color: #f5f0e1; font-weight: bold; }
 .skin-item.active .skin-name { color: #c9a227; }
 .skin-desc { font-size: 20rpx; color: #b0a685; }
+
+/* 桌布选择项：缩略色块预览，图案与牌桌 .cloth-* 同源 */
+.cloth-item {
+  flex: 1 1 calc(50% - 10rpx);
+  min-width: 280rpx;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; gap: 6rpx;
+  padding: 20rpx 12rpx; border-radius: 14rpx;
+  background: rgba(26, 16, 4, 0.35); border: 2rpx solid #4a3c22;
+  transition: border-color 0.15s, background 0.15s;
+}
+.cloth-item.active { border-color: #c9a227; background: rgba(201, 162, 39, 0.14); }
+.cloth-item.active .skin-name { color: #c9a227; }
+.cloth-preview { width: 100%; display: flex; justify-content: center; }
+.cloth-swatch {
+  width: 220rpx; height: 88rpx; border-radius: 10rpx;
+  border: 2rpx solid rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+/* 预览色块图案：与 game.vue 牌桌桌布同源（scoped 隔离，此处复制背景定义） */
+.cloth-swatch.cloth-classic {
+  background-color: #3a2410;
+  background-image: radial-gradient(ellipse at 50% 42%, rgba(255, 220, 150, 0.10), rgba(0, 0, 0, 0.32) 78%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.015) 0 2rpx, transparent 2rpx 6rpx);
+}
+.cloth-swatch.cloth-felt-green {
+  background-color: #1e4a34;
+  background-image: radial-gradient(ellipse at 50% 42%, rgba(120, 200, 150, 0.16), rgba(0, 0, 0, 0.38) 80%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.03) 0 1rpx, transparent 1rpx 5rpx),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.05) 0 1rpx, transparent 1rpx 5rpx);
+}
+.cloth-swatch.cloth-diamond {
+  background-color: #3d2a12;
+  background-image: radial-gradient(ellipse at 50% 42%, rgba(255, 210, 130, 0.12), rgba(0, 0, 0, 0.34) 80%),
+    repeating-linear-gradient(45deg, rgba(201, 162, 39, 0.16) 0 2rpx, transparent 2rpx 56rpx),
+    repeating-linear-gradient(-45deg, rgba(201, 162, 39, 0.16) 0 2rpx, transparent 2rpx 56rpx);
+}
+.cloth-swatch.cloth-cloud {
+  background-color: #33261a;
+  background-image: radial-gradient(ellipse at 50% 42%, rgba(240, 210, 150, 0.12), rgba(0, 0, 0, 0.34) 80%),
+    radial-gradient(circle at 28rpx 28rpx, rgba(232, 201, 90, 0.14) 6rpx, transparent 7rpx),
+    radial-gradient(circle at 56rpx 56rpx, rgba(232, 201, 90, 0.10) 4rpx, transparent 5rpx);
+  background-size: 100% 100%, 112rpx 112rpx, 112rpx 112rpx;
+}
+.cloth-swatch.cloth-plaid {
+  background-color: #5a1f1c;
+  background-image: radial-gradient(ellipse at 50% 42%, rgba(255, 150, 120, 0.12), rgba(0, 0, 0, 0.38) 80%),
+    repeating-linear-gradient(0deg, rgba(201, 162, 39, 0.18) 0 2rpx, transparent 2rpx 64rpx),
+    repeating-linear-gradient(90deg, rgba(201, 162, 39, 0.18) 0 2rpx, transparent 2rpx 64rpx),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1rpx, transparent 1rpx 4rpx);
+}
+.cloth-swatch.cloth-night {
+  background-color: #16203a;
+  background-image: radial-gradient(ellipse at 50% 38%, rgba(120, 150, 230, 0.16), rgba(0, 0, 0, 0.42) 82%),
+    radial-gradient(circle at 20rpx 30rpx, rgba(255, 255, 255, 0.5) 1.5rpx, transparent 2.5rpx),
+    radial-gradient(circle at 70rpx 60rpx, rgba(255, 255, 255, 0.35) 1rpx, transparent 2rpx),
+    radial-gradient(circle at 45rpx 85rpx, rgba(232, 201, 90, 0.4) 1.5rpx, transparent 2.5rpx);
+  background-size: 100% 100%, 120rpx 120rpx, 120rpx 120rpx, 120rpx 120rpx;
+}
 </style>

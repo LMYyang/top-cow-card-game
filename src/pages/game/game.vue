@@ -1,5 +1,5 @@
 <template>
-  <view class="table" :class="{ revealing: fx.revealKept, shake: tableShake }" @click="onRevealTap">
+  <view class="table" :class="[clothCls, { revealing: fx.revealKept, shake: tableShake }]" @click="onRevealTap">
     <!-- 联网模式连接状态条：断线/重连中置顶提示 -->
     <view v-if="isNet && connection !== 'open'" class="net-bar">连接断开，重连中…</view>
     <!-- 返回主菜单：右上角小按钮（不遮牌面）；对局中先确认再走 goHome（联网局通知服务器退房） -->
@@ -151,6 +151,7 @@ import TableTimeline from '../../components/TableTimeline.vue'
 import PlayingTile from '../../components/PlayingTile.vue'
 import PlayerAvatar from '../../components/PlayerAvatar.vue'
 import { placeSides, diceToSeatOffset, declarationFor } from '../../core/rules.js'
+import { loadCloth, clothClass } from '../../core/tableCloths.js'
 import { useGame } from '../../composables/useGame.js'
 import { useNetGame } from '../../composables/useNetGame.js'
 import { useSound } from '../../composables/useSound.js'
@@ -216,6 +217,9 @@ let offRoomState = null
 
 const selectedId = ref(null)
 const mySide = ref('bottom') // 我出牌的放置端 bottom | top，默认下端
+
+// 桌布：纯本地偏好，开局读取一次；设置页点选即存，返回本页重建后生效
+const clothCls = computed(() => clothClass(loadCloth()))
 
 /** UI 视角座位名（solo：固定称呼；net：服务器成员昵称） */
 const labelOf = (seat) => gameApi.value?.labelOf(seat) ?? String(seat)
@@ -773,6 +777,68 @@ function confirmGoHome() {
   /* 补足 iPhone 底部 Home 指示条安全区 */
   padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
+  /* 桌布底色兜底：各 cloth-* 类在此之上叠加图案；中心略亮、四周压暗形成桌面弧度 */
+  background-color: #3a2410;
+  background-image: radial-gradient(ellipse at 50% 42%, rgba(255, 220, 150, 0.10), rgba(0, 0, 0, 0.32) 78%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* ---------- 桌布图案（cloth-* 主题类，叠加在 .table 兜底底色之上） ---------- */
+/* 经典深棕绒面：保留兜底渐变，仅加一层极淡的绒面细点 */
+.cloth-classic {
+  background-image:
+    radial-gradient(ellipse at 50% 42%, rgba(255, 220, 150, 0.10), rgba(0, 0, 0, 0.32) 78%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.015) 0 2rpx, transparent 2rpx 6rpx);
+}
+
+/* 墨绿呢绒：深绿底 + 细密呢绒斜纹 + 中心光晕 */
+.cloth-felt-green {
+  background-color: #1e4a34;
+  background-image:
+    radial-gradient(ellipse at 50% 42%, rgba(120, 200, 150, 0.16), rgba(0, 0, 0, 0.38) 80%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.03) 0 1rpx, transparent 1rpx 5rpx),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.05) 0 1rpx, transparent 1rpx 5rpx);
+}
+
+/* 菱格织锦：暗金菱形交错网格，中式织锦感 */
+.cloth-diamond {
+  background-color: #3d2a12;
+  background-image:
+    radial-gradient(ellipse at 50% 42%, rgba(255, 210, 130, 0.12), rgba(0, 0, 0, 0.34) 80%),
+    repeating-linear-gradient(45deg, rgba(201, 162, 39, 0.16) 0 2rpx, transparent 2rpx 56rpx),
+    repeating-linear-gradient(-45deg, rgba(201, 162, 39, 0.16) 0 2rpx, transparent 2rpx 56rpx);
+}
+
+/* 祥云卷草：米金卷云圆点错排，低透明度国风底纹 */
+.cloth-cloud {
+  background-color: #33261a;
+  background-image:
+    radial-gradient(ellipse at 50% 42%, rgba(240, 210, 150, 0.12), rgba(0, 0, 0, 0.34) 80%),
+    radial-gradient(circle at 28rpx 28rpx, rgba(232, 201, 90, 0.14) 6rpx, transparent 7rpx),
+    radial-gradient(circle at 56rpx 56rpx, rgba(232, 201, 90, 0.10) 4rpx, transparent 5rpx);
+  background-size: 100% 100%, 112rpx 112rpx, 112rpx 112rpx;
+}
+
+/* 酒红格纹：酒红底 + 纵横金线格 + 细织纹 */
+.cloth-plaid {
+  background-color: #5a1f1c;
+  background-image:
+    radial-gradient(ellipse at 50% 42%, rgba(255, 150, 120, 0.12), rgba(0, 0, 0, 0.38) 80%),
+    repeating-linear-gradient(0deg, rgba(201, 162, 39, 0.18) 0 2rpx, transparent 2rpx 64rpx),
+    repeating-linear-gradient(90deg, rgba(201, 162, 39, 0.18) 0 2rpx, transparent 2rpx 64rpx),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1rpx, transparent 1rpx 4rpx);
+}
+
+/* 午夜星空：深蓝夜幕 + 错排细碎星点微光 */
+.cloth-night {
+  background-color: #16203a;
+  background-image:
+    radial-gradient(ellipse at 50% 38%, rgba(120, 150, 230, 0.16), rgba(0, 0, 0, 0.42) 82%),
+    radial-gradient(circle at 20rpx 30rpx, rgba(255, 255, 255, 0.5) 1.5rpx, transparent 2.5rpx),
+    radial-gradient(circle at 70rpx 60rpx, rgba(255, 255, 255, 0.35) 1rpx, transparent 2rpx),
+    radial-gradient(circle at 45rpx 85rpx, rgba(232, 201, 90, 0.4) 1.5rpx, transparent 2.5rpx);
+  background-size: 100% 100%, 120rpx 120rpx, 120rpx 120rpx, 120rpx 120rpx;
 }
 .middle-row { flex: 1; display: flex; min-height: 0; padding-bottom: 8rpx; }
 /* 联网断线提示条 */
